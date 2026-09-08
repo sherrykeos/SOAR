@@ -1,6 +1,7 @@
 # Vajra pipeline
 
 from app.models.manager import ModelManager
+from app.tools.pdf_reader import PDFReaderTool
 from app.tools.read_file import ReadFileTool
 from app.tools.registry import ToolRegistry
 
@@ -43,6 +44,7 @@ class Orchestrator:
 
     def _register_default_tools(self) -> None:
         self.tool_registry.register(ReadFileTool())
+        self.tool_registry.register(PDFReaderTool())
 
     def run(self, task: str) -> AgentState:
         return self.agent.run(task)
