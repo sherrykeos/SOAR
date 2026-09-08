@@ -4,6 +4,7 @@ from app.models.manager import ModelManager
 from app.tools.docx_creator import DOCXCreatorTool
 from app.tools.pdf_creator import PDFCreatorTool
 from app.tools.pdf_reader import PDFReaderTool
+from app.tools.python_sandbox import PythonSandboxTool
 from app.tools.read_file import ReadFileTool
 from app.tools.registry import ToolRegistry
 
@@ -49,6 +50,7 @@ class Orchestrator:
         self.tool_registry.register(PDFReaderTool())
         self.tool_registry.register(DOCXCreatorTool())
         self.tool_registry.register(PDFCreatorTool())
+        self.tool_registry.register(PythonSandboxTool())
 
     def run(self, task: str) -> AgentState:
         return self.agent.run(task)
