@@ -144,10 +144,12 @@ class TestIngestion(unittest.TestCase):
         self.assertEqual(pptx_res["status"], "success")
         self.assertEqual(pptx_res["chunks_indexed"], 2)
 
-        # 4. Ingest Scanned PDF
+        # 4. Ingest Scanned PDF (processed via vision OCR)
         scanned_res = pipeline.ingest_file(self.scanned_pdf_path)
-        self.assertEqual(scanned_res["status"], "scanned_needs_ocr")
+        self.assertEqual(scanned_res["status"], "success")
         self.assertTrue(scanned_res["is_scanned"])
+        self.assertFalse(scanned_res["needs_ocr"])
+        self.assertTrue(scanned_res["chunks_indexed"] >= 1)
 
         # Check total documents in SQLite
         docs = db.list_documents()

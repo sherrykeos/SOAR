@@ -7,7 +7,7 @@ class BaseVisionProcessor(ABC):
     """
     Abstract Base Class for Vision Processors in SOAR.
     Provides standardized interfaces for extracting descriptions, visual semantics,
-    and metadata from local image files.
+    OCR text, and metadata from local image files.
     """
 
     @abstractmethod
@@ -25,16 +25,28 @@ class BaseVisionProcessor(ABC):
         """
         pass
 
+    @abstractmethod
+    def extract_text_ocr(self, image_path: str | Path, **kwargs: Any) -> str:
+        """
+        Performs visual text extraction / OCR on an image (e.g., scanned document page, receipt, diagram).
+        """
+        pass
+
 
 class MockVisionProcessor(BaseVisionProcessor):
     """
     Deterministic Mock Vision Processor for testing and air-gapped environments
-    without requiring heavy local vision models (e.g. Qwen-VL / LLaVA).
-    Generates structured semantic descriptions based on image metadata.
+    without requiring heavy local vision models (e.g. Qwen2.5-VL).
+    Generates structured semantic descriptions and simulated OCR text based on image metadata.
     """
 
-    def __init__(self, default_description_prefix: str = "Image analysis:"):
+    def __init__(
+        self,
+        default_description_prefix: str = "Image analysis:",
+        default_ocr_prefix: str = "[OCR Extracted Text]:",
+    ):
         self.default_description_prefix = default_description_prefix
+        self.default_ocr_prefix = default_ocr_prefix
 
     def process_image(self, image_path: str | Path, **kwargs: Any) -> Dict[str, Any]:
         path = Path(image_path).resolve()
@@ -53,6 +65,7 @@ class MockVisionProcessor(BaseVisionProcessor):
             mode = "UNKNOWN"
 
         description = self.describe_image(path, width=width, height=height, format=format_name, mode=mode)
+        ocr_text = self.extract_text_ocr(path, width=width, height=height, format=format_name)
 
         return {
             "source_path": str(path),
@@ -62,6 +75,7 @@ class MockVisionProcessor(BaseVisionProcessor):
             "height": height,
             "mode": mode,
             "description": description,
+            "ocr_text": ocr_text,
         }
 
     def describe_image(self, image_path: str | Path, **kwargs: Any) -> str:
@@ -87,3 +101,8 @@ class MockVisionProcessor(BaseVisionProcessor):
             f"(Format: {format_name}, Dimensions: {width}x{height} pixels). "
             f"Visual asset for multimodal knowledge base."
         )
+
+    def extract_text_ocr(self, image_path: str | Path, **kwargs: Any) -> str:
+        path = Path(image_path).resolve()
+        filename = path.name
+        return f"{self.default_ocr_prefix} Scanned textual content from image '{filename}'."

@@ -47,7 +47,7 @@ class IngestionPipeline:
                 self.register_extractor(ext)
         else:
             # Default extractor registry
-            self.register_extractor(PDFExtractor())
+            self.register_extractor(PDFExtractor(vision_processor=self.vision_processor))
             self.register_extractor(DOCXExtractor())
             self.register_extractor(PPTXExtractor())
             self.register_extractor(ImageExtractor(vision_processor=self.vision_processor))
