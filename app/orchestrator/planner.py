@@ -25,7 +25,25 @@ class Planner:
 
         lines = ["Available tools:"]
         for tool in tools:
-            lines.append(f"- {tool.name}: {tool.description}")
+            lines.append(f"\nTool: {tool.name}")
+            lines.append(f"Description: {tool.description}")
+            if hasattr(tool, "parameters") and tool.parameters:
+                req_params = [
+                    (k, v) for k, v in tool.parameters.items() if v.get("required", False)
+                ]
+                opt_params = [
+                    (k, v) for k, v in tool.parameters.items() if not v.get("required", False)
+                ]
+                if req_params:
+                    lines.append("Required parameters:")
+                    for p_name, p_meta in req_params:
+                        lines.append(f"  - {p_name}: {p_meta.get('description', '')}")
+                if opt_params:
+                    lines.append("Optional parameters:")
+                    for p_name, p_meta in opt_params:
+                        lines.append(f"  - {p_name}: {p_meta.get('description', '')}")
+            else:
+                lines.append("Parameters: none")
         return "\n".join(lines)
 
     def _format_observations(self, state: AgentState) -> str:
@@ -63,6 +81,9 @@ Rules:
 - If the task is completed based on observations or no further actions are needed, return "status": "complete" and "steps": [].
 - If more actions are needed, return "status": "continue" and provide the next step(s).
 - Use only tools listed under Available tools.
+- In "arguments", use the EXACT parameter names defined in the tool's parameter list (e.g. "file_path", "output_path", "title", "content", "code"). Do NOT use "parameter_name" as a key.
+- CRITICAL PATH RULES: Always copy file paths from the TASK exactly as written with their full directory prefixes (e.g. if TASK specifies "inputs/inspection_report.pdf", use "inputs/inspection_report.pdf", NOT "inspection_report.pdf"; if TASK specifies "outputs/approval_note.docx", use "outputs/approval_note.docx").
+- ERROR RECOVERY: If a previous tool step failed or returned an error, analyze the error message and do NOT repeat the exact same failing arguments. Fix the argument values or take a different action.
 - Keep the plan between 0 and 5 steps.
 - Do not execute the task yourself.
 
@@ -72,9 +93,9 @@ Exact JSON Schema:
   "thought": "brief reasoning",
   "steps": [
     {{
-      "tool": "tool_name",
+      "tool": "<tool_name>",
       "arguments": {{
-        "parameter_name": "value"
+        "<actual_param_name>": "<value>"
       }}
     }}
   ]
@@ -86,7 +107,7 @@ Exact JSON Schema:
 
         response = self.model_manager.generate(prompt, task_type="reasoning")
 
-        print("\n===== PLANNER RESPONSE =====")
+        print("\n===== PLANNER RESPONSE =====\n")
         print(response)
         print("============================\n")
 

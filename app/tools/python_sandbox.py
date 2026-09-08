@@ -38,8 +38,23 @@ class PythonSandboxTool(BaseTool):
     def description(self) -> str:
         return (
             "Executes Python code locally in an isolated sandbox workspace. "
-            "Pass 'code' as a parameter. Files created in the script are stored in the sandbox workspace."
+            "Files created in the script are stored in the sandbox workspace."
         )
+
+    @property
+    def parameters(self) -> dict[str, dict[str, Any]]:
+        return {
+            "code": {
+                "type": "string",
+                "description": "Python code string to execute in the isolated sandbox workspace.",
+                "required": True,
+            },
+            "timeout": {
+                "type": "integer",
+                "description": "Optional execution timeout in seconds (default: 10).",
+                "required": False,
+            },
+        }
 
     def _validate_code_security(self, code: str) -> Optional[str]:
         """

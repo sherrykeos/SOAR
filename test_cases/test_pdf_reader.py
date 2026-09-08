@@ -110,10 +110,30 @@ try:
     print("Empty PDF handled safely.")
 
     # ---------------------------------------------------------
-    # 7. Execution through Executor via ToolAction
+    # 7. Schema and Argument Validation Tests
     # ---------------------------------------------------------
-    print("\n8. Testing execution through Executor...")
+    print("\n8. Testing PDFReaderTool schema and argument validation...")
+    assert "file_path" in tool.parameters
+    assert tool.parameters["file_path"]["required"] is True
+
     executor = Executor(tool_registry=registry)
+
+    # Reject placeholder 'parameter_name'
+    bad_param_res = executor.execute_action(ToolAction(tool="pdf_reader", arguments={"parameter_name": "file_path"}))
+    assert bad_param_res["status"] == "error"
+    assert "Invalid placeholder argument 'parameter_name'" in bad_param_res["error"]
+    print("Placeholder 'parameter_name' rejected safely by Executor.")
+
+    # Reject missing required arguments
+    missing_arg_res = executor.execute_action(ToolAction(tool="pdf_reader", arguments={}))
+    assert missing_arg_res["status"] == "error"
+    assert "Missing required parameter 'file_path'" in missing_arg_res["error"]
+    print("Missing required argument rejected safely by Executor.")
+
+    # ---------------------------------------------------------
+    # 8. Execution through Executor via ToolAction
+    # ---------------------------------------------------------
+    print("\n9. Testing execution through Executor...")
     action = ToolAction(tool="pdf_reader", arguments={"file_path": valid_pdf_path})
     exec_result = executor.execute_action(action)
     print(f"Executor result: {exec_result}")
@@ -122,9 +142,9 @@ try:
     print("Executor execution verified.")
 
     # ---------------------------------------------------------
-    # 8. Deterministic Agent Loop Integration Test
+    # 9. Deterministic Agent Loop Integration Test
     # ---------------------------------------------------------
-    print("\n9. Testing Agent Loop with PDFReaderTool...")
+    print("\n10. Testing Agent Loop with PDFReaderTool...")
 
     class PDFSequenceResponder:
         def __init__(self, pdf_file: str):

@@ -12,21 +12,34 @@ class PDFReaderTool(BaseTool):
 
     @property
     def description(self) -> str:
-        return (
-            "Extracts text from a local PDF document. "
-            "Pass 'file_path' (or 'path') as a parameter."
-        )
+        return "Extracts text from a local PDF document."
+
+    @property
+    def parameters(self) -> dict[str, dict[str, Any]]:
+        return {
+            "file_path": {
+                "type": "string",
+                "description": "Path to the local PDF file to extract text from.",
+                "required": True,
+            }
+        }
 
     def execute(self, **kwargs: Any) -> str:
         file_path = kwargs.get("file_path") or kwargs.get("path")
 
         if not file_path:
-            return "Error: Missing required parameter 'file_path' or 'path'."
+            return "Error: Missing required parameter 'file_path' (or 'path')."
 
         target_path = Path(file_path)
 
+        # Fallback to common directories if relative file not found directly in cwd
         if not target_path.exists():
-            return f"Error: File not found at '{file_path}'."
+            if (Path("inputs") / file_path).exists():
+                target_path = Path("inputs") / file_path
+            elif (Path("sandbox/workspace") / file_path).exists():
+                target_path = Path("sandbox/workspace") / file_path
+            else:
+                return f"Error: File not found at '{file_path}'."
 
         if target_path.is_dir():
             return f"Error: Path '{file_path}' is a directory, not a file."

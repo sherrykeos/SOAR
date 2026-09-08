@@ -13,10 +13,27 @@ class DOCXCreatorTool(BaseTool):
 
     @property
     def description(self) -> str:
-        return (
-            "Creates a local DOCX document with a title and paragraph content. "
-            "Pass 'output_path' (or 'file_path'), 'title', and 'content' as parameters."
-        )
+        return "Creates a local DOCX document with a title and paragraph content."
+
+    @property
+    def parameters(self) -> dict[str, dict[str, Any]]:
+        return {
+            "output_path": {
+                "type": "string",
+                "description": "Path where the generated DOCX file will be saved.",
+                "required": True,
+            },
+            "title": {
+                "type": "string",
+                "description": "Document title or heading.",
+                "required": False,
+            },
+            "content": {
+                "type": "string",
+                "description": "Text body or paragraph content for the document.",
+                "required": True,
+            },
+        }
 
     def execute(self, **kwargs: Any) -> str:
         output_path = (
@@ -38,7 +55,7 @@ class DOCXCreatorTool(BaseTool):
 
         try:
             target_path = Path(output_path)
-            
+
             # Ensure parent directory exists
             if target_path.parent and not target_path.parent.exists():
                 target_path.parent.mkdir(parents=True, exist_ok=True)

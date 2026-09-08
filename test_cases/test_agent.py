@@ -202,9 +202,181 @@ try:
     assert "Database connection lost" in crash_state.observations[0]["result"]
     print("Tool crash contained safely and recorded in observations.")
 
+    # -------------------------------------------------------------
+    # 6. Safety Test: Agent Recovery from Invalid Tool Action (Bad Arguments)
+    # -------------------------------------------------------------
+    print("\n6. Testing Agent Recovery from Invalid Tool Arguments...")
+
+    class RecoverySequenceResponder:
+        def __init__(self, file_path: str):
+            self.count = 0
+            self.file_path = file_path
+
+        def __call__(self, prompt: str) -> str:
+            self.count += 1
+            if self.count == 1:
+                # Iteration 1: Send bad argument key 'parameter_name'
+                return json.dumps({
+                    "status": "continue",
+                    "thought": "I will read the file but with bad parameter name.",
+                    "steps": [
+                        {
+                            "tool": "read_file",
+                            "arguments": {"parameter_name": "file_path"}
+                        }
+                    ]
+                })
+            elif self.count == 2:
+                # Iteration 2: After seeing validation error in prompt, fix arguments
+                return json.dumps({
+                    "status": "continue",
+                    "thought": "I see the parameter error. Fixing argument to file_path.",
+                    "steps": [
+                        {
+                            "tool": "read_file",
+                            "arguments": {"file_path": self.file_path}
+                        }
+                    ]
+                })
+            else:
+                # Iteration 3: Complete task
+                return json.dumps({
+                    "status": "complete",
+                    "thought": "File read successfully after recovery.",
+                    "steps": []
+                })
+
+    rec_mock = MockModel(
+        model_id="rec-mock",
+        capabilities={ModelCapability.GENERAL, ModelCapability.REASONING},
+        response_fn=RecoverySequenceResponder(temp_path),
+    )
+    rec_reg = ModelRegistry()
+    rec_reg.register(rec_mock)
+    rec_mgr = ModelManager(model_registry=rec_reg, model_router=ModelRouter(rec_reg))
+    rec_tool_reg = ToolRegistry()
+    rec_tool_reg.register(ReadFileTool())
+    rec_planner = Planner(model_manager=rec_mgr, tool_registry=rec_tool_reg)
+    rec_executor = Executor(tool_registry=rec_tool_reg)
+    rec_agent = Agent(planner=rec_planner, executor=rec_executor, max_iterations=5)
+
+    rec_state = rec_agent.run("Read inspection report with error recovery.")
+    print(f"Recovery State Status: {rec_state.status}")
+    print(f"Recovery Iterations: {rec_state.iterations}")
+    print(f"Recovery Observations: {rec_state.observations}")
+
+    assert rec_state.status == "completed"
+    assert rec_state.iterations == 3
+    # Step 1 was error
+    assert rec_state.observations[0]["status"] == "error"
+    assert "Invalid placeholder argument 'parameter_name'" in rec_state.observations[0]["result"]
+    # Step 2 was completed
+    assert rec_state.observations[1]["status"] == "completed"
+    assert "SOAR Inspection Report" in rec_state.observations[1]["result"]
+    print("Agent successfully recovered from argument validation error and completed task!")
+
+    # -------------------------------------------------------------
+    # 7. End-to-End Deterministic Pipeline: PDF -> Observation -> DOCX
+    # -------------------------------------------------------------
+    print("\n7. Testing End-to-End Deterministic Pipeline (PDF Reader -> DOCX Creator)...")
+    import fitz
+    import docx
+    from app.tools.docx_creator import DOCXCreatorTool
+    from app.tools.pdf_reader import PDFReaderTool
+
+    with tempfile.TemporaryDirectory() as pipeline_temp:
+        pipeline_dir = pipeline_temp.replace("\\", "/")
+        pdf_input = f"{pipeline_dir}/inspection_report.pdf"
+        docx_output = f"{pipeline_dir}/approval_note.docx"
+
+        # Create input PDF
+        doc = fitz.open()
+        p = doc.new_page()
+        p.insert_text((72, 72), "Turbine Pressure: 120 PSI. Vibration: Normal. Status: APPROVED")
+        doc.save(pdf_input)
+        doc.close()
+
+        class PDFToDOCXResponder:
+            def __init__(self, in_pdf: str, out_docx: str):
+                self.count = 0
+                self.in_pdf = in_pdf
+                self.out_docx = out_docx
+
+            def __call__(self, prompt: str) -> str:
+                self.count += 1
+                if self.count == 1:
+                    # Step 1: Read PDF
+                    return json.dumps({
+                        "status": "continue",
+                        "thought": "I will read the inspection report PDF first.",
+                        "steps": [
+                            {
+                                "tool": "pdf_reader",
+                                "arguments": {"file_path": self.in_pdf}
+                            }
+                        ]
+                    })
+                elif self.count == 2:
+                    # Step 2: Create DOCX approval note
+                    return json.dumps({
+                        "status": "continue",
+                        "thought": "I will generate the approval note DOCX based on the inspection report.",
+                        "steps": [
+                            {
+                                "tool": "docx_creator",
+                                "arguments": {
+                                    "output_path": self.out_docx,
+                                    "title": "Industrial Equipment Approval Note",
+                                    "content": "Based on the inspection, Turbine Pressure was 120 PSI and status is APPROVED.",
+                                }
+                            }
+                        ]
+                    })
+                else:
+                    return json.dumps({
+                        "status": "complete",
+                        "thought": "Approval note DOCX has been created. Task complete.",
+                        "steps": []
+                    })
+
+        p2d_mock = MockModel(
+            model_id="p2d-mock",
+            capabilities={ModelCapability.GENERAL, ModelCapability.REASONING},
+            response_fn=PDFToDOCXResponder(pdf_input, docx_output),
+        )
+        p2d_reg = ModelRegistry()
+        p2d_reg.register(p2d_mock)
+        p2d_mgr = ModelManager(model_registry=p2d_reg, model_router=ModelRouter(p2d_reg))
+
+        p2d_tool_reg = ToolRegistry()
+        p2d_tool_reg.register(PDFReaderTool())
+        p2d_tool_reg.register(DOCXCreatorTool())
+
+        p2d_planner = Planner(model_manager=p2d_mgr, tool_registry=p2d_tool_reg)
+        p2d_executor = Executor(tool_registry=p2d_tool_reg)
+        p2d_agent = Agent(planner=p2d_planner, executor=p2d_executor, max_iterations=5)
+
+        p2d_state = p2d_agent.run(f"Process inspection report at '{pdf_input}' and generate approval note at '{docx_output}'")
+
+        print(f"Pipeline Status: {p2d_state.status}")
+        print(f"Pipeline Iterations: {p2d_state.iterations}")
+        print(f"Pipeline Observations: {len(p2d_state.observations)}")
+
+        assert p2d_state.status == "completed"
+        assert p2d_state.iterations == 3
+        assert os.path.exists(docx_output)
+
+        # Verify generated DOCX contents
+        gen_doc = docx.Document(docx_output)
+        doc_texts = [para.text for para in gen_doc.paragraphs]
+        assert any("Industrial Equipment Approval Note" in t for t in doc_texts)
+        assert any("Turbine Pressure was 120 PSI" in t for t in doc_texts)
+        print("End-to-End PDF -> Observation -> DOCX pipeline successfully verified!")
+
 finally:
     if os.path.exists(temp_path):
         os.remove(temp_path)
         print(f"\nCleaned up test file at: {temp_path}")
 
 print("\n[TEST] All Agent Loop tests passed successfully!")
+
