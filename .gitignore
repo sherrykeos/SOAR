@@ -2,5 +2,14 @@
 __pycache__/
 *.pyc
 .env
-*inputs
-*outputs
+inputs/
+outputs/
+sandbox/workspace/*
+!sandbox/workspace/.gitkeep
+sandbox/temp/*
+!sandbox/temp/.gitkeep
+data/soar.db*
+data/chroma/*
+!data/chroma/.gitkeep
+data/documents/*
+!data/documents/.gitkeep
