@@ -42,12 +42,12 @@ class PlanParser:
 
         Expected schema:
         {
+            "status": "continue" | "complete",
+            "thought": "optional reasoning",
             "steps": [
                 {
                     "tool": "tool_name",
-                    "arguments": {
-                        "param_name": "value"
-                    }
+                    "arguments": { ... }
                 }
             ]
         }
@@ -70,10 +70,23 @@ class PlanParser:
                 f"Plan root must be a JSON object/dict, got {type(parsed).__name__}"
             )
 
-        if "steps" not in parsed:
-            raise PlanParseError("Plan missing required 'steps' field.")
+        raw_status = str(parsed.get("status", "continue")).strip().lower()
+        if raw_status in ("complete", "completed", "finish", "done"):
+            plan_status = "complete"
+        else:
+            plan_status = "continue"
 
-        raw_steps = parsed["steps"]
+        thought = str(parsed.get("thought", parsed.get("reasoning", "")))
+
+        # Handle 'steps' field
+        if "steps" not in parsed:
+            if plan_status == "complete":
+                raw_steps = []
+            else:
+                raise PlanParseError("Plan missing required 'steps' field.")
+        else:
+            raw_steps = parsed["steps"]
+
         if not isinstance(raw_steps, list):
             raise PlanParseError(
                 f"Plan 'steps' field must be a list, got {type(raw_steps).__name__}."
@@ -87,7 +100,11 @@ class PlanParser:
             except (ActionParseError, ValueError, TypeError) as e:
                 raise PlanParseError(f"Malformed action at step {i}: {str(e)}") from e
 
-        return StructuredPlan(steps=steps)
+        # If no steps provided and status not explicitly continue, consider complete
+        if not steps and "status" not in parsed:
+            plan_status = "complete"
+
+        return StructuredPlan(steps=steps, status=plan_status, thought=thought)
 
     @classmethod
     def validate_tools(cls, plan: StructuredPlan, tool_registry: ToolRegistry) -> None:
@@ -95,6 +112,9 @@ class PlanParser:
         Validates that all tools referenced in the plan exist in the ToolRegistry.
         Raises PlanParseError if an unknown tool is encountered.
         """
+        if not plan.steps:
+            return
+
         registered_tools = {t.name for t in tool_registry.list_tools()}
         for i, action in enumerate(plan.steps):
             if action.tool not in registered_tools:

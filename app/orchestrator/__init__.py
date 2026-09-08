@@ -1,5 +1,6 @@
 from .action import ToolAction
 from .action_parser import ActionParseError, ActionParser
+from .agent import Agent
 from .executor import Executor
 from .orchestrator import Orchestrator
 from .plan import StructuredPlan
@@ -17,5 +18,6 @@ __all__ = [
     "Orchestrator",
     "Planner",
     "Executor",
+    "Agent",
     "AgentState",
 ]

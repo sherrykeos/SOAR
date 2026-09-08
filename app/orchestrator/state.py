@@ -1,7 +1,3 @@
-# This represents the state of a running agent task.
-# The important idea is that the agent has state.
-# Later, this will allow Vajra to remember:
-
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -12,4 +8,7 @@ class AgentState:
     plan: list[Any] = field(default_factory=list)
     current_step: int = 0
     results: list[Any] = field(default_factory=list)
+    observations: list[dict[str, Any]] = field(default_factory=list)
+    iterations: int = 0
+    max_iterations: int = 5
     status: str = "pending"
