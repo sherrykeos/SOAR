@@ -1,4 +1,4 @@
-from orchestrator.orchestrator import Orchestrator
+from app.orchestrator.orchestrator import Orchestrator
 
 
 orchestrator = Orchestrator()

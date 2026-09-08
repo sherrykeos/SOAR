@@ -1,4 +1,4 @@
-from models.manager import ModelManager
+from app.models.manager import ModelManager
 
 
 model_manager = ModelManager()
