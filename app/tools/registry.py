@@ -24,3 +24,6 @@ class ToolRegistry:
 
     def list_tools(self) -> list[BaseTool]:
         return list(self._tools.values())
+
+    def list_tool_names(self) -> list[str]:
+        return list(self._tools.keys())

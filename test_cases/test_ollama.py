@@ -1,7 +1,8 @@
 import requests
 
 
-prompt = """
+if __name__ == "__main__":
+    prompt = """
 You are the planning component of SOAR.
 
 Create a simple step-by-step plan for this task:
@@ -16,25 +17,25 @@ Rules:
 - Do not execute the task.
 """
 
-print("[TEST] Sending request...", flush=True)
+    print("[TEST] Sending request...", flush=True)
 
-response = requests.post(
-    "http://localhost:11434/api/generate",
-    json={
-        "model": "qwen3:4b",
-        "prompt": prompt,
-        "stream": False,
-        "think": False,
-    },
-    timeout=180,
-)
+    response = requests.post(
+        "http://localhost:11434/api/generate",
+        json={
+            "model": "qwen2.5:3b",
+            "prompt": prompt,
+            "stream": False,
+            "think": False,
+        },
+        timeout=180,
+    )
 
-print("[TEST] Response received", flush=True)
+    print("[TEST] Response received", flush=True)
 
-response.raise_for_status()
+    response.raise_for_status()
 
-data = response.json()
+    data = response.json()
 
-print("\n===== RESPONSE =====")
-print(data["response"])
-print("====================")
+    print("\n===== RESPONSE =====")
+    print(data["response"])
+    print("====================")

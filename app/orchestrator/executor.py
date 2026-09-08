@@ -47,6 +47,13 @@ class Executor:
                     "error": result,
                     "result": result,
                 }
+            if isinstance(result, dict) and result.get("status") == "error":
+                return {
+                    "status": "error",
+                    "tool": action.tool,
+                    "error": result.get("error", "Tool reported an error status."),
+                    "result": result,
+                }
             return {
                 "status": "completed",
                 "tool": action.tool,

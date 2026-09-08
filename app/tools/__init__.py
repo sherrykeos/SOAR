@@ -5,6 +5,7 @@ from .pdf_reader import PDFReaderTool
 from .python_sandbox import PythonSandboxTool
 from .read_file import ReadFileTool
 from .registry import ToolRegistry
+from .search_knowledge import SearchKnowledgeTool
 
 __all__ = [
     "BaseTool",
@@ -14,4 +15,5 @@ __all__ = [
     "DOCXCreatorTool",
     "PDFCreatorTool",
     "PythonSandboxTool",
+    "SearchKnowledgeTool",
 ]
