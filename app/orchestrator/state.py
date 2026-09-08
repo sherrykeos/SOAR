@@ -9,7 +9,7 @@ from typing import Any
 @dataclass
 class AgentState:
     task: str
-    plan: list[str] = field(default_factory=list)
+    plan: list[Any] = field(default_factory=list)
     current_step: int = 0
     results: list[Any] = field(default_factory=list)
     status: str = "pending"

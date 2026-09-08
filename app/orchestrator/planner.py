@@ -1,29 +1,64 @@
 from app.models.manager import ModelManager
+from app.tools.registry import ToolRegistry
+
+from .plan_parser import PlanParseError, PlanParser
 from .state import AgentState
 
 
 class Planner:
 
-    def __init__(self, model_manager: ModelManager):
+    def __init__(
+        self,
+        model_manager: ModelManager,
+        tool_registry: ToolRegistry | None = None,
+    ):
         self.model_manager = model_manager
+        self.tool_registry = tool_registry
+
+    def _format_tools_description(self) -> str:
+        if not self.tool_registry:
+            return "No tools currently registered."
+
+        tools = self.tool_registry.list_tools()
+        if not tools:
+            return "No tools currently registered."
+
+        lines = ["Available tools:"]
+        for tool in tools:
+            lines.append(f"- {tool.name}: {tool.description}")
+        return "\n".join(lines)
 
     def create_plan(self, state: AgentState) -> AgentState:
+        tools_desc = self._format_tools_description()
 
-        prompt = f"""
-You are the planning component of SOAR, a sovereign
-on-premise AI agent.
+        prompt = f"""You are the planning component of SOAR, a sovereign on-premise AI agent.
 
-Create a simple step-by-step plan for the following task:
+Create an executable structured plan for the following task using ONLY the registered tools.
 
 TASK:
 {state.task}
 
+{tools_desc}
+
 Rules:
-- Return only the numbered steps.
-- Each step must describe one concrete action.
-- Keep the plan between 2 and 6 steps.
+- Output ONLY a valid JSON object matching the exact schema below.
+- Do NOT wrap the JSON in markdown code fences.
+- Do NOT include any explanations, preambles, or commentary.
+- Use only tools listed under Available tools.
+- Keep the plan between 1 and 6 steps.
 - Do not execute the task.
-"""
+
+Exact JSON Schema:
+{{
+  "steps": [
+    {{
+      "tool": "tool_name",
+      "arguments": {{
+        "parameter_name": "value"
+      }}
+    }}
+  ]
+}}"""
 
         print("\n===== SENDING TO MODEL =====")
         print(prompt)
@@ -35,36 +70,22 @@ Rules:
         print(response)
         print("============================\n")
 
-        state.plan = self._parse_plan(response)
+        try:
+            plan = PlanParser.parse(response)
+            if self.tool_registry is not None:
+                PlanParser.validate_tools(plan, self.tool_registry)
+
+            state.plan = plan.steps
+            state.status = "planned"
+        except PlanParseError as e:
+            print(f"[PLANNER ERROR] {e}")
+            state.status = "error"
+            state.results.append(
+                {
+                    "status": "error",
+                    "error": f"Plan parsing/validation failed: {str(e)}",
+                    "raw_response": response,
+                }
+            )
 
         return state
-
-    def _parse_plan(self, response: str) -> list[str]:
-        steps = []
-
-        for line in response.splitlines():
-            line = line.strip()
-
-            if not line:
-                continue
-
-            # Remove common numbering formats:
-            # 1. Step
-            # 1) Step
-            if line[0].isdigit():
-
-                parts = line.split(".", 1)
-
-                if len(parts) == 2:
-                    line = parts[1].strip()
-
-                else:
-                    parts = line.split(")", 1)
-
-                    if len(parts) == 2:
-                        line = parts[1].strip()
-
-            if line:
-                steps.append(line)
-
-        return steps
