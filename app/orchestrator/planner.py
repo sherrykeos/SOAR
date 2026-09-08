@@ -64,7 +64,7 @@ Exact JSON Schema:
         print(prompt)
         print("============================\n")
 
-        response = self.model_manager.generate(prompt)
+        response = self.model_manager.generate(prompt, task_type="reasoning")
 
         print("\n===== PLANNER RESPONSE =====")
         print(response)

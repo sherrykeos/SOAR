@@ -11,8 +11,9 @@ with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8", suffix=".t
 try:
     orchestrator = Orchestrator()
 
+    normalized_path = temp_path.replace("\\", "/")
     result = orchestrator.run(
-        f"Read the inspection report from '{temp_path}'"
+        f"Read the inspection report from '{normalized_path}'"
     )
 
     print("\n===== ORCHESTRATOR EXECUTION RESULT =====")
