@@ -170,6 +170,8 @@ class ModelManager:
         profile: Any = None,
         think: bool = False,
         timeout: float | None = None,
+        emitter: Any = None,
+        run_id: str | None = None,
         **kwargs: Any,
     ) -> ModelExecutionResult:
         """
@@ -186,6 +188,43 @@ class ModelManager:
         eff_timeout = timeout if timeout is not None else decision.timeout_seconds
         primary_model = decision.selected_model
 
+        if decision.fallback_used and emitter:
+            emitter.emit(
+                stage="MODEL_SELECTING",
+                status="IN_PROGRESS",
+                message=f"Model {decision.requested_model_id} unavailable, falling back to {decision.selected_model.model_id}",
+                metadata={
+                    "requested_model": decision.requested_model_id,
+                    "fallback_model": decision.selected_model.model_id,
+                    "fallback_reason": decision.fallback_reason,
+                },
+                run_id=run_id,
+            )
+
+        if emitter:
+            emitter.emit(
+                stage="MODEL_SELECTING",
+                status="COMPLETED",
+                message=f"Model selected — {primary_model.model_id}",
+                metadata={
+                    "selected_model": primary_model.model_id,
+                    "requested_model": decision.requested_model_id,
+                    "fallback_used": decision.fallback_used,
+                },
+                run_id=run_id,
+            )
+
+        # 2. GENERATING_OUTPUT (Only after model selection has completed)
+        output_label = "Python code" if (profile and getattr(profile, "execution_mode", "") == "code") else "response"
+        if emitter:
+            emitter.emit(
+                stage="GENERATING_OUTPUT",
+                status="STARTED",
+                message=f"Generating {output_label}",
+                metadata={"requires_rag": getattr(profile, "requires_rag", False) if profile else False},
+                run_id=run_id,
+            )
+
         start_time = time.perf_counter()
 
         # Try execution on selected model
@@ -197,6 +236,14 @@ class ModelManager:
                 **kwargs,
             )
             duration = time.perf_counter() - start_time
+            if emitter:
+                emitter.emit(
+                    stage="GENERATING_OUTPUT",
+                    status="COMPLETED",
+                    message=f"{output_label.capitalize()} generated",
+                    metadata={"duration_seconds": round(duration, 3)},
+                    run_id=run_id,
+                )
             return ModelExecutionResult(
                 response=response,
                 requested_model_id=decision.requested_model_id,
@@ -217,6 +264,19 @@ class ModelManager:
             is_timeout = isinstance(e, TimeoutError) or "timed out" in str(e).lower()
             reason = "timeout" if is_timeout else f"inference error: {str(e)}"
 
+            if emitter:
+                emitter.emit(
+                    stage="MODEL_SELECTING",
+                    status="IN_PROGRESS",
+                    message=f"Model timeout/unavailable, falling back to {decision.fallback_model_id}",
+                    metadata={
+                        "requested_model": decision.requested_model_id,
+                        "fallback_model": decision.fallback_model_id,
+                        "fallback_reason": reason,
+                    },
+                    run_id=run_id,
+                )
+
             # If we were already on the fallback model and it crashed, re-raise
             if primary_model.model_id == decision.fallback_model_id:
                 raise e
@@ -227,6 +287,25 @@ class ModelManager:
             except Exception:
                 fallback_model = self.router.route(task_type=ModelCapability.GENERAL)
 
+            if emitter:
+                emitter.emit(
+                    stage="MODEL_SELECTING",
+                    status="COMPLETED",
+                    message=f"Model selected — {fallback_model.model_id}",
+                    metadata={
+                        "selected_model": fallback_model.model_id,
+                        "requested_model": decision.requested_model_id,
+                        "fallback_used": True,
+                    },
+                    run_id=run_id,
+                )
+                emitter.emit(
+                    stage="GENERATING_OUTPUT",
+                    status="STARTED",
+                    message=f"Generating {output_label} with {fallback_model.model_id}",
+                    run_id=run_id,
+                )
+
             fb_start = time.perf_counter()
             response = fallback_model.generate(
                 prompt,
@@ -235,6 +314,15 @@ class ModelManager:
                 **kwargs,
             )
             fb_duration = time.perf_counter() - fb_start
+
+            if emitter:
+                emitter.emit(
+                    stage="GENERATING_OUTPUT",
+                    status="COMPLETED",
+                    message=f"{output_label.capitalize()} generated",
+                    metadata={"duration_seconds": round(fb_duration, 3)},
+                    run_id=run_id,
+                )
 
             return ModelExecutionResult(
                 response=response,

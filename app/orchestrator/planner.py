@@ -1,6 +1,7 @@
 from app.models.manager import ModelManager
 from app.tools.registry import ToolRegistry
 
+from .events import EventStage, EventStatus, ProgressEventEmitter
 from .plan_parser import PlanParseError, PlanParser
 from .state import AgentState
 
@@ -11,9 +12,11 @@ class Planner:
         self,
         model_manager: ModelManager,
         tool_registry: ToolRegistry | None = None,
+        emitter: ProgressEventEmitter | None = None,
     ):
         self.model_manager = model_manager
         self.tool_registry = tool_registry
+        self.emitter = emitter
 
     def _format_tools_description(self) -> str:
         if not self.tool_registry:
@@ -62,6 +65,15 @@ class Planner:
         return "\n".join(lines)
 
     def create_plan(self, state: AgentState) -> AgentState:
+        if self.emitter:
+            self.emitter.emit(
+                stage=EventStage.PLANNING,
+                status=EventStatus.STARTED,
+                message="Planning task",
+                metadata={"iteration": state.iterations},
+                run_id=state.run_id,
+            )
+
         tools_desc = self._format_tools_description()
         obs_desc = self._format_observations(state)
 
@@ -119,9 +131,29 @@ Exact JSON Schema:
             if plan.status == "complete" or not plan.steps:
                 state.plan = []
                 state.status = "completed"
+                if self.emitter:
+                    self.emitter.emit(
+                        stage=EventStage.PLANNING,
+                        status=EventStatus.COMPLETED,
+                        message="Plan completed",
+                        metadata={"number_of_steps": 0, "tools": []},
+                        run_id=state.run_id,
+                    )
             else:
                 state.plan = plan.steps
                 state.status = "planned"
+                if self.emitter:
+                    step_tools = [s.tool for s in plan.steps if hasattr(s, "tool")]
+                    self.emitter.emit(
+                        stage=EventStage.PLANNING,
+                        status=EventStatus.COMPLETED,
+                        message="Plan created",
+                        metadata={
+                            "number_of_steps": len(plan.steps),
+                            "tools": step_tools,
+                        },
+                        run_id=state.run_id,
+                    )
 
         except PlanParseError as e:
             print(f"[PLANNER ERROR] {e}")
@@ -133,5 +165,13 @@ Exact JSON Schema:
                     "raw_response": response,
                 }
             )
+            if self.emitter:
+                self.emitter.emit(
+                    stage=EventStage.PLANNING,
+                    status=EventStatus.FAILED,
+                    message="Plan creation failed",
+                    metadata={"error": str(e)},
+                    run_id=state.run_id,
+                )
 
         return state
