@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from .action import ToolAction
+from ..execution.action import ToolAction
 
 
 @dataclass

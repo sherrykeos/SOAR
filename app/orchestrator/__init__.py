@@ -1,6 +1,4 @@
-from .action import ToolAction
-from .action_parser import ActionParseError, ActionParser
-from .agent import Agent
+from .agent import Agent, AgentState, RecoveryManager, TaskContext
 from .events import (
     BaseEventSink,
     CallbackEventSink,
@@ -10,12 +8,10 @@ from .events import (
     ProgressEvent,
     ProgressEventEmitter,
 )
-from .executor import Executor
+from .execution import ActionParseError, ActionParser, Executor, ToolAction
 from .orchestrator import Orchestrator
-from .plan import StructuredPlan
-from .plan_parser import PlanParseError, PlanParser
-from .planner import Planner
-from .state import AgentState
+from .planning import PlanParseError, PlanParser, Planner, StructuredPlan
+from .routing import TaskClassifier, TaskProfile
 
 __all__ = [
     "ToolAction",
@@ -29,6 +25,10 @@ __all__ = [
     "Executor",
     "Agent",
     "AgentState",
+    "TaskContext",
+    "RecoveryManager",
+    "TaskClassifier",
+    "TaskProfile",
     "EventStage",
     "EventStatus",
     "ProgressEvent",

@@ -14,13 +14,11 @@ from app.tools.read_file import ReadFileTool
 from app.tools.registry import ToolRegistry
 from app.tools.search_knowledge import SearchKnowledgeTool
 
-from .action import ToolAction
-from .agent import Agent
+from .agent import Agent, AgentState
 from .events import EventStage, EventStatus, ProgressEventEmitter
-from .executor import Executor
-from .planner import Planner
-from .state import AgentState
-from .task_classifier import TaskClassifier, TaskProfile
+from .execution import Executor, ToolAction
+from .planning import Planner
+from .routing import TaskClassifier, TaskProfile
 
 
 class Orchestrator:

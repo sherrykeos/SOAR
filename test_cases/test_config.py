@@ -23,7 +23,7 @@ from app.config import (
 from app.models.adapter import ModelCapability
 from app.models.manager import ModelManager
 from app.models.router import ModelRouter
-from app.orchestrator.task_classifier import TaskProfile
+from app.orchestrator.routing import TaskProfile
 
 
 class TestConfigurationSystem(unittest.TestCase):

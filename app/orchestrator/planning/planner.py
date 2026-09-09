@@ -1,9 +1,9 @@
 from app.models.manager import ModelManager
 from app.tools.registry import ToolRegistry
 
-from .events import EventStage, EventStatus, ProgressEventEmitter
-from .plan_parser import PlanParseError, PlanParser
-from .state import AgentState
+from ..events.emitter import EventStage, EventStatus, ProgressEventEmitter
+from ..agent.state import AgentState, TaskContext
+from .parser import PlanParseError, PlanParser
 
 
 class Planner:
@@ -40,7 +40,6 @@ class Planner:
 
     def _format_task_context(self, state: AgentState) -> str:
         if not state.context:
-            from .state import TaskContext
             state.context = TaskContext.from_task(state.task)
 
         ctx = state.context

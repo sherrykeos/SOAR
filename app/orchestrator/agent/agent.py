@@ -1,10 +1,10 @@
-import json
 from typing import Any
 
-from .action import ToolAction
-from .events import EventStage, EventStatus, ProgressEventEmitter, sanitize_value
-from .executor import Executor
-from .planner import Planner
+from ..events.emitter import EventStage, EventStatus, ProgressEventEmitter
+from ..execution.action import ToolAction
+from ..execution.executor import Executor
+from ..planning.planner import Planner
+from .recovery import RecoveryManager
 from .state import AgentState, TaskContext
 
 
@@ -100,25 +100,11 @@ class Agent:
             for step in state.plan:
                 if isinstance(step, ToolAction):
                     # Check failure fingerprint to prevent repeating identical failing actions
-                    try:
-                        norm_args = json.dumps(step.arguments, sort_keys=True)
-                    except (TypeError, ValueError):
-                        norm_args = str(step.arguments)
+                    repeated_failure = RecoveryManager.check_repeated_failure(state, step)
 
-                    prev_failure = next(
-                        (f for f in state.failure_fingerprints if f.get("tool") == step.tool and f.get("args") == norm_args),
-                        None
-                    )
-
-                    if prev_failure:
+                    if repeated_failure:
                         print(f"[AGENT] Intercepted repeated failing action: {step.tool} with {step.arguments}")
-                        prev_err_msg = prev_failure.get("error", "Action previously failed.")
-                        repeated_obs_msg = (
-                            f"REPEATED FAILING ACTION DETECTED:\n"
-                            f"The action '{step.tool}' with arguments {step.arguments} already failed previously in this run with error:\n"
-                            f"'{prev_err_msg}'\n\n"
-                            f"DO NOT repeat the exact same failing action. Correct the argument names, fix file paths, or choose another valid approach."
-                        )
+                        repeated_obs_msg = repeated_failure["observation_message"]
                         action_result = {
                             "status": "error",
                             "tool": step.tool,
@@ -155,11 +141,7 @@ class Agent:
                     # Record failure fingerprint if action failed
                     raw_res = action_result.get("result", action_result.get("error", ""))
                     if action_result.get("status") == "error":
-                        state.failure_fingerprints.append({
-                            "tool": step.tool,
-                            "args": norm_args,
-                            "error": str(raw_res)[:300],
-                        })
+                        RecoveryManager.record_failure(state, step, raw_res)
 
                     # Capture Observation
                     observation = {

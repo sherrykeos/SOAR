@@ -1,6 +1,6 @@
 import unittest
 
-from app.orchestrator.task_classifier import TaskClassifier, TaskProfile
+from app.orchestrator.routing import TaskClassifier, TaskProfile
 
 
 class TestTaskClassifier(unittest.TestCase):

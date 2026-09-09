@@ -71,3 +71,7 @@ class AgentState:
     status: str = "pending"
     context: Optional[TaskContext] = None
     failure_fingerprints: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def task_context(self) -> Optional[TaskContext]:
+        return self.context

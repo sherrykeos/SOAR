@@ -240,7 +240,7 @@ class ModelManager:
         Speed > Accuracy priority for MVP.
         """
         if profile is None:
-            from app.orchestrator.task_classifier import TaskClassifier
+            from app.orchestrator.routing import TaskClassifier
 
             profile = TaskClassifier().classify(prompt)
 

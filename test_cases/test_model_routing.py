@@ -8,8 +8,8 @@ from app.models.manager import ModelManager
 from app.models.mock import MockModel
 from app.models.registry import ModelRegistry
 from app.models.router import ModelRouter
-from app.orchestrator.orchestrator import Orchestrator
-from app.orchestrator.task_classifier import TaskClassifier, TaskProfile
+from app.orchestrator import Orchestrator
+from app.orchestrator.routing import TaskClassifier, TaskProfile
 from app.tools.base import BaseTool
 from app.tools.registry import ToolRegistry
 

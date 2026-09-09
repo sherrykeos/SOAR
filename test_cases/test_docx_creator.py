@@ -10,10 +10,9 @@ from app.models.manager import ModelManager
 from app.models.mock import MockModel
 from app.models.registry import ModelRegistry
 from app.models.router import ModelRouter
-from app.orchestrator.action import ToolAction
 from app.orchestrator.agent import Agent
-from app.orchestrator.executor import Executor
-from app.orchestrator.planner import Planner
+from app.orchestrator.execution import Executor, ToolAction
+from app.orchestrator.planning import Planner
 from app.tools.docx_creator import DOCXCreatorTool
 from app.tools.registry import ToolRegistry
 

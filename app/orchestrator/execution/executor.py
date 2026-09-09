@@ -4,8 +4,8 @@ from typing import Any, Dict
 from app.tools.registry import ToolRegistry
 
 from .action import ToolAction
-from .events import EventStage, EventStatus, ProgressEventEmitter, sanitize_value
-from .state import AgentState
+from ..events.emitter import EventStage, EventStatus, ProgressEventEmitter, sanitize_value
+from ..agent.state import AgentState
 
 
 class Executor:
@@ -106,7 +106,7 @@ class Executor:
 
         if not val_result.is_valid:
             from app.tools.validator import ToolValidator
-            formatted_err = ToolValidator.format_error_observation(tool, val_result, task_context=kwargs.get("context"))
+            formatted_err = ToolValidator.format_error_observation(tool, val_result, task_context=kwargs.get("context") or context)
             duration = time.perf_counter() - start_time
             if self.emitter:
                 self.emitter.emit(
@@ -197,7 +197,7 @@ class Executor:
         for step in state.plan:
             if isinstance(step, ToolAction):
                 print(f"Executing tool action: {step.tool} with arguments {step.arguments}")
-                result = self.execute_action(step, run_id=state.run_id)
+                result = self.execute_action(step, run_id=state.run_id, context=state.task_context)
                 state.results.append(result)
             else:
                 print(f"Executing: {step}")
