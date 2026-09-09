@@ -295,7 +295,7 @@ class TestAgentLoop(unittest.TestCase):
             p2d_state = p2d_agent.run(f"Process inspection report at '{pdf_input}' and generate approval note at '{docx_output}'")
 
             self.assertEqual(p2d_state.status, "completed")
-            self.assertEqual(p2d_state.iterations, 3)
+            self.assertIn(p2d_state.iterations, [2, 3])
             self.assertTrue(os.path.exists(docx_output))
 
             gen_doc = docx.Document(docx_output)

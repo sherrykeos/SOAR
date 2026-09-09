@@ -2,6 +2,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from app.config import resolve_project_path
+
 from .base import BaseTool
 
 
@@ -54,7 +56,9 @@ class DOCXCreatorTool(BaseTool):
             return "Error: python-docx library is not installed."
 
         try:
-            target_path = Path(output_path)
+            # Keep relative outputs rooted at the backend project so creation and
+            # registration use the same location regardless of server cwd.
+            target_path = resolve_project_path(output_path)
 
             # Ensure parent directory exists
             if target_path.parent and not target_path.parent.exists():

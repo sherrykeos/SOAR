@@ -49,6 +49,9 @@ class ModelRouter:
         Raises ValueError if no registered model supports the capability.
         """
         candidates = self.registry.find_by_capability(task_type)
+        for c in candidates:
+            if c.is_available():
+                return c
         if candidates:
             return candidates[0]
 

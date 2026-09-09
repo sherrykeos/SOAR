@@ -71,7 +71,7 @@ class Planner:
             )
         return "\n".join(lines)
 
-    def create_plan(self, state: AgentState) -> AgentState:
+    def create_plan(self, state: AgentState, model_id: str | None = None) -> AgentState:
         if self.emitter:
             self.emitter.emit(
                 stage=EventStage.PLANNING,
@@ -103,10 +103,16 @@ Rules:
 - If more actions are needed, return "status": "continue" and provide the next step(s).
 - Use ONLY tools listed under Available tools.
 - In "arguments", use the EXACT parameter names defined in the tool's schema (e.g. "file_path", "output_path", "title", "content", "code", "query").
-- NEVER use placeholder keys like "parameter_name".
-- NEVER use placeholder values like "file_path" or "<actual_path>". Supply actual argument values.
-- CRITICAL PATH RULES: Always copy file paths from the TASK exactly as written with their full directory prefixes (e.g. if TASK specifies "inputs/inspection_report.pdf", use "inputs/inspection_report.pdf", NOT "inspection_report.pdf"; if TASK specifies "outputs/approval_note.docx", use "outputs/approval_note.docx").
-- ERROR RECOVERY: If a previous tool step failed or returned a validation error, analyze the error message and schema, and output a corrected action. Do NOT repeat the exact same failing arguments.
+- DO NOT INVENT OR HALLUCINATE INPUT FILES: Only call 'read_file' or 'pdf_reader' if an existing input file was explicitly mentioned in the user TASK. If the user asks to write, generate, or create an article, document, or PDF from scratch without an input file, directly generate the text and supply it in the 'content' argument of 'pdf_creator' or 'docx_creator', or run code in 'python_sandbox'.
+- KNOWLEDGE BASE (search_knowledge): Only call 'search_knowledge' if the user explicitly asks for information from the knowledge base, organizational manuals, safety documents, or company policies. For general knowledge topics (e.g. general articles, essays, creative tasks), write the article directly using the AI's internal knowledge without querying 'search_knowledge'.
+- ARTICLE & DOCUMENT GENERATION: When the user asks to write an article, story, or memo and make it a PDF or DOCX, do it in a SINGLE step using 'pdf_creator' (for PDF) or 'docx_creator' (for DOCX) with:
+  * "output_path": "outputs/<topic_name>.pdf" (or .docx)
+  * "title": "<Article Title>"
+  * "content": "<The full written article text with rich, well-structured paragraphs>"
+- CRITICAL PATH RULES: Always copy file paths from the TASK exactly as written with their full directory prefixes (e.g. if TASK specifies "inputs/inspection_report.pdf", use "inputs/inspection_report.pdf", NOT "inspection_report.pdf"; if TASK specifies "outputs/approval_note.docx", use "outputs/approval_note.docx"). If the user asks to create an output file but does not specify a path, save to 'outputs/<name>.pdf' or 'outputs/<name>.docx'.
+- TASK COMPLETION: If previous observations show that the requested file was successfully created (e.g. "Successfully created PDF document at..."), the task is DONE. You MUST return:
+  {{"status": "complete", "thought": "Document created successfully.", "steps": []}}
+  Do NOT repeat the creation step.
 - Keep the plan between 0 and 5 steps.
 - Do not execute the task yourself.
 
@@ -128,7 +134,7 @@ Exact JSON Schema:
         print(prompt)
         print("============================\n")
 
-        response = self.model_manager.generate(prompt, task_type="reasoning")
+        response = self.model_manager.generate(prompt, model_id=model_id, task_type="reasoning")
 
         print("\n===== PLANNER RESPONSE =====\n")
         print(response)

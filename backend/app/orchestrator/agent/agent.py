@@ -1,3 +1,4 @@
+import uuid
 from typing import Any
 
 from ..events.emitter import EventStage, EventStatus, ProgressEventEmitter
@@ -46,9 +47,10 @@ class Agent:
             return f"status: {status}"
         return str(result)[:100]
 
-    def run(self, task: str) -> AgentState:
+    def run(self, task: str, run_id: str | None = None, model_id: str | None = None) -> AgentState:
         state = AgentState(
             task=task,
+            run_id=run_id or str(uuid.uuid4()),
             max_iterations=self.max_iterations,
             context=TaskContext.from_task(task),
         )
@@ -69,7 +71,7 @@ class Agent:
                 )
 
             # 1. PLAN / RE-PLAN
-            state = self.planner.create_plan(state)
+            state = self.planner.create_plan(state, model_id=model_id)
 
             if state.status == "error":
                 print("[AGENT] Error encountered during planning. Halting loop.")
@@ -177,6 +179,24 @@ class Agent:
                         }
                     )
                     state.current_step += 1
+
+            # Auto-complete task if document creation (pdf_creator/docx_creator) completed successfully
+            has_doc_created = any(
+                obs.get("tool") in ("pdf_creator", "docx_creator") and obs.get("status") == "completed"
+                for obs in state.observations
+            )
+            if has_doc_created:
+                print("[AGENT] Document creation step completed successfully. Task finished.")
+                state.status = "completed"
+                if self.emitter:
+                    self.emitter.emit(
+                        stage=EventStage.COMPLETED,
+                        status=EventStatus.COMPLETED,
+                        message="Task completed",
+                        metadata={"iterations": state.iterations, "status": "completed"},
+                        run_id=state.run_id,
+                    )
+                break
 
             # Clear plan for next re-planning iteration
             state.plan = []

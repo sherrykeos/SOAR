@@ -3,6 +3,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.exceptions import ResponseValidationError
 from fastapi.responses import JSONResponse
 
 from app.api.dependencies import get_orchestrator, set_api_dependencies
@@ -56,6 +57,18 @@ def create_app(config: Optional[SOARConfig] = None) -> FastAPI:
             },
         )
 
+    @app.exception_handler(ResponseValidationError)
+    async def response_validation_exception_handler(request: Request, exc: ResponseValidationError):
+        logger.exception("Task response validation failed: %s", exc)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "error": "response_validation_error",
+                "message": "The task completed, but the API response could not be serialized.",
+                "details": exc.errors(),
+            },
+        )
+
     @app.exception_handler(StorageError)
     async def storage_exception_handler(request: Request, exc: StorageError):
         return JSONResponse(
@@ -74,7 +87,7 @@ def create_app(config: Optional[SOARConfig] = None) -> FastAPI:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={
                 "error": "internal_error",
-                "message": "An unexpected error occurred during processing.",
+                "message": f"An unexpected error occurred during processing: {exc}",
                 "details": None,
             },
         )

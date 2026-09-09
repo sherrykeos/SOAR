@@ -17,6 +17,8 @@ class HealthResponse(BaseModel):
 class TaskRequest(BaseModel):
     task: str = Field(..., min_length=1, description="The user prompt or task description to execute.")
     model: Optional[str] = Field(None, description="Optional explicit model ID override. None implies auto-routing.")
+    run_id: Optional[str] = Field(None, description="Optional client-provided run ID for tracking.")
+    attached_file_ids: Optional[List[str]] = Field(None, description="Optional list of file_ids (from /api/files/upload) to inject as context.")
 
 
 class TaskModelInfo(BaseModel):
@@ -25,6 +27,12 @@ class TaskModelInfo(BaseModel):
     fallback_used: bool = False
     fallback_reason: Optional[str] = None
     duration_seconds: Optional[float] = 0.0
+
+
+class GeneratedFileInfo(BaseModel):
+    file_id: str
+    filename: str
+    mime_type: Optional[str] = None
 
 
 class TaskResponse(BaseModel):
@@ -36,6 +44,7 @@ class TaskResponse(BaseModel):
     citations: List[Dict[str, Any]] = Field(default_factory=list)
     model_details: Optional[Dict[str, Any]] = None
     events: List[Dict[str, Any]] = Field(default_factory=list)
+    generated_files: List[GeneratedFileInfo] = Field(default_factory=list)
 
 
 class EventItem(BaseModel):

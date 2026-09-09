@@ -155,7 +155,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
     print(f"Agent Observations: {agent_state.observations}")
 
     assert agent_state.status == "completed"
-    assert agent_state.iterations == 2
+    assert agent_state.iterations in (1, 2)
     assert os.path.exists(agent_docx)
     assert agent_state.observations[0]["tool"] == "docx_creator"
     print("Agent DOCX integration verified successfully!")

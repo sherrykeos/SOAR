@@ -228,6 +228,7 @@ class ModelManager:
         prompt: str,
         *,
         profile: Any = None,
+        model_id: Optional[str] = None,
         think: bool = False,
         timeout: float | None = None,
         emitter: Any = None,
@@ -235,7 +236,8 @@ class ModelManager:
         **kwargs: Any,
     ) -> ModelExecutionResult:
         """
-        Executes text generation using adaptive routing based on TaskProfile.
+        Executes text generation using adaptive routing based on TaskProfile,
+        or explicitly uses model_id if specified.
         Includes automatic timeout safeguard (default 15s for 4B) and local fallback to qwen3:1.7b.
         Speed > Accuracy priority for MVP.
         """
@@ -244,9 +246,22 @@ class ModelManager:
 
             profile = TaskClassifier().classify(prompt)
 
-        decision: ModelRouteDecision = self.router.route_task(profile)
-        eff_timeout = timeout if timeout is not None else decision.timeout_seconds
-        primary_model = decision.selected_model
+        if model_id is not None:
+            primary_model = self.registry.get(model_id)
+            eff_timeout = timeout if timeout is not None else 180.0
+            decision = ModelRouteDecision(
+                requested_model_id=model_id,
+                selected_model=primary_model,
+                fallback_model_id=self.default_model_name,
+                timeout_seconds=eff_timeout,
+                fallback_used=False,
+                fallback_reason=None,
+                task_profile=profile,
+            )
+        else:
+            decision = self.router.route_task(profile)
+            eff_timeout = timeout if timeout is not None else decision.timeout_seconds
+            primary_model = decision.selected_model
 
         if decision.fallback_used and emitter:
             emitter.emit(

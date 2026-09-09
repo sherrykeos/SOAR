@@ -1,5 +1,8 @@
+from html import escape
 from pathlib import Path
 from typing import Any
+
+from app.config import resolve_project_path
 
 from .base import BaseTool
 
@@ -55,7 +58,9 @@ class PDFCreatorTool(BaseTool):
             return "Error: reportlab library is not installed."
 
         try:
-            target_path = Path(output_path)
+            # Keep relative outputs rooted at the backend project so creation and
+            # registration use the same location regardless of server cwd.
+            target_path = resolve_project_path(output_path)
 
             # Ensure parent directory exists
             if target_path.parent and not target_path.parent.exists():
@@ -89,7 +94,8 @@ class PDFCreatorTool(BaseTool):
                 body_style.leading = 14
 
                 for p in paragraphs:
-                    story.append(Paragraph(p, body_style))
+                    # ReportLab Paragraph parses XML-like markup; escape ordinary user text.
+                    story.append(Paragraph(escape(p), body_style))
                     story.append(Spacer(1, 8))
 
             doc.build(story)

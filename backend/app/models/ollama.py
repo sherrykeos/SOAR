@@ -33,26 +33,40 @@ class OllamaModel(ModelAdapter):
             priority=self._priority,
         )
 
+    _tags_cache = None
+    _tags_cache_time = 0.0
+
     def is_available(self) -> bool:
         """
         Checks whether the model is actually installed and available in the local Ollama instance.
         100% local check via /api/tags without cloud access.
+        Caches tags response briefly (3s) to avoid redundant serial HTTP roundtrips when listing multiple models.
         """
-        try:
-            resp = requests.get(f"{self.base_url}/api/tags", timeout=1.5)
-            if resp.status_code != 200:
-                return False
-            data = resp.json()
-            models = data.get("models", [])
-            installed_names = [m.get("name", "").lower() for m in models]
-            target = self._model_name.lower()
-            # Direct match (e.g. 'qwen3:1.7b') or base match (e.g. 'qwen3')
-            return any(
-                target == name or target.split(":")[0] == name.split(":")[0]
-                for name in installed_names
-            )
-        except Exception:
+        import time
+
+        now = time.time()
+        installed_names = None
+        if OllamaModel._tags_cache is not None and (now - OllamaModel._tags_cache_time) < 3.0:
+            installed_names = OllamaModel._tags_cache
+        else:
+            try:
+                resp = requests.get(f"{self.base_url}/api/tags", timeout=1.5)
+                if resp.status_code == 200:
+                    models = resp.json().get("models", [])
+                    installed_names = [m.get("name", "").lower() for m in models]
+                    OllamaModel._tags_cache = installed_names
+                    OllamaModel._tags_cache_time = now
+            except Exception:
+                pass
+
+        if installed_names is None:
             return False
+
+        target = self._model_name.lower()
+        return any(
+            target == name or target.split(":")[0] == name.split(":")[0]
+            for name in installed_names
+        )
 
     def generate(
         self,

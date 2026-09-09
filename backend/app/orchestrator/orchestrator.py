@@ -1,11 +1,15 @@
 # Vajra pipeline
 
+import logging
+import mimetypes
 import re
 import time
 import uuid
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from app.models.manager import ModelExecutionResult, ModelManager
+from app.config import resolve_project_path
 from app.tools.docx_creator import DOCXCreatorTool
 from app.tools.pdf_creator import PDFCreatorTool
 from app.tools.pdf_reader import PDFReaderTool
@@ -19,6 +23,8 @@ from .events import EventStage, EventStatus, ProgressEventEmitter
 from .execution import Executor, ToolAction
 from .planning import Planner
 from .routing import TaskClassifier, TaskProfile
+
+logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
@@ -95,6 +101,7 @@ class Orchestrator:
         task: str,
         profile: TaskProfile,
         run_id: Optional[str] = None,
+        model_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Executes fast, single-turn direct answer mode.
@@ -137,6 +144,7 @@ class Orchestrator:
         exec_result: ModelExecutionResult = self.model_manager.generate_with_routing(
             prompt,
             profile=profile,
+            model_id=model_id,
             emitter=self.emitter,
             run_id=run_id,
         )
@@ -175,9 +183,10 @@ class Orchestrator:
         task: str,
         profile: TaskProfile,
         run_id: Optional[str] = None,
+        model_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Executes dedicated Python coding path using qwen2.5-coder:1.5b.
+        Executes dedicated Python coding path using qwen2.5-coder:1.5b (or explicit model_id).
         Optionally executes in python_sandbox if requested.
         """
         prompt = (
@@ -190,6 +199,7 @@ class Orchestrator:
         exec_result: ModelExecutionResult = self.model_manager.generate_with_routing(
             prompt,
             profile=profile,
+            model_id=model_id,
             emitter=self.emitter,
             run_id=run_id,
         )
@@ -242,17 +252,153 @@ class Orchestrator:
             "events": self.emitter.get_events_for_run(run_id) if (self.emitter and run_id) else (self.emitter.get_event_dicts() if self.emitter else []),
         }
 
+    def _resolve_uploaded_files(self, file_ids: List[str]) -> str:
+        """
+        Resolves uploaded file_ids to their real storage paths via LocalFileStorage,
+        then directly extracts the content (PDF text, plain text) and injects it
+        into the task prompt as explicit document context.
+
+        For PDFs: uses PDFReaderTool to extract text directly.
+        For text files: reads content directly.
+        This avoids passing absolute paths to the LLM, which it cannot reliably reproduce.
+        """
+        from app.api.dependencies import get_storage
+        storage = get_storage()
+        sections: List[str] = []
+
+        for fid in file_ids:
+            fid = fid.strip()
+            if not fid:
+                continue
+            try:
+                path = storage.get_path(fid)
+                meta = storage.get_metadata(fid)
+                original_name = meta.original_filename if meta else path.name
+                suffix = path.suffix.lower()
+
+                if suffix == ".pdf":
+                    # Extract text directly using the existing PDFReaderTool
+                    reader = PDFReaderTool()
+                    extracted = reader.execute(file_path=str(path))
+                    if extracted.startswith("Error:"):
+                        logger.warning(f"PDF extraction failed for '{original_name}': {extracted}")
+                        sections.append(
+                            f"[Uploaded file: {original_name}]\n"
+                            f"Unable to read this PDF locally: {extracted}\n"
+                        )
+                    else:
+                        # Truncate very large docs to avoid blowing the context window
+                        max_chars = 8000
+                        truncated = extracted[:max_chars]
+                        if len(extracted) > max_chars:
+                            truncated += f"\n... [truncated — {len(extracted) - max_chars} additional characters not shown]"
+                        sections.append(
+                            f"[Uploaded document: {original_name}]\n"
+                            f"{truncated}\n"
+                        )
+                elif suffix in (".txt", ".md", ".csv", ".log", ".json", ".xml", ".html"):
+                    content = path.read_text(encoding="utf-8", errors="replace")
+                    max_chars = 8000
+                    truncated = content[:max_chars]
+                    if len(content) > max_chars:
+                        truncated += f"\n... [truncated]"
+                    sections.append(
+                        f"[Uploaded file: {original_name}]\n"
+                        f"{truncated}\n"
+                    )
+                else:
+                    # For binary/unsupported types, note the file name only
+                    sections.append(
+                        f"[Uploaded file: {original_name} (type: {suffix or 'unknown'}) — binary content not shown]\n"
+                    )
+            except Exception as e:
+                logger.warning(f"Could not resolve uploaded file_id '{fid}': {e}")
+
+        if not sections:
+            return ""
+
+        header = (
+            "=== UPLOADED DOCUMENT CONTEXT ===\n"
+            "The following document(s) were uploaded by the user. "
+            "Use this content to answer the question below.\n\n"
+        )
+        return header + "\n".join(sections) + "=== END DOCUMENT CONTEXT ===\n\n"
+
+
+    def _register_generated_files(self, observations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Scans agent observations for successfully created documents (pdf_creator/docx_creator),
+        verifies the output file physically exists, registers it through LocalFileStorage,
+        and returns a list of {file_id, filename, mime_type} dicts for the API response.
+        """
+        from app.api.dependencies import get_storage
+        storage = get_storage()
+        generated: List[Dict[str, Any]] = []
+        seen_paths: set = set()
+
+        for obs in observations:
+            tool = obs.get("tool")
+            if tool not in ("pdf_creator", "docx_creator"):
+                continue
+            if obs.get("status") != "completed":
+                continue
+
+            args = obs.get("arguments", {})
+            output_path = args.get("output_path") or args.get("file_path") or args.get("path")
+            if not output_path or output_path in seen_paths:
+                continue
+            seen_paths.add(output_path)
+
+            target = resolve_project_path(output_path)
+
+            if not target.exists() or not target.is_file():
+                logger.warning(f"Generated file not found at '{output_path}', skipping registration.")
+                continue
+
+            try:
+                mime_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+                meta = storage.save(
+                    content=target,
+                    filename=target.name,
+                    content_type=mime_type,
+                )
+                generated.append({
+                    "file_id": meta.file_id,
+                    "filename": meta.original_filename,
+                    "mime_type": mime_type,
+                })
+                logger.info(f"Registered generated file '{target.name}' as file_id={meta.file_id}")
+            except Exception as e:
+                logger.warning(f"Failed to register generated file '{output_path}': {e}")
+
+        return generated
+
     def process_task(
         self,
         task: str,
         run_id: Optional[str] = None,
         model_id: Optional[str] = None,
+        attached_file_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Main entry point for unified SOAR task processing.
-        Classifies task, routes to optimal local model, and dispatches to
+        Classifies task, routes to optimal local model (or explicit override), and dispatches to
         direct answer, coding, or agent mode with real progress event emissions.
         """
+        if model_id:
+            try:
+                adapter = self.model_manager.registry.get(model_id)
+                if not adapter.is_available():
+                    raise ValueError(f"Requested model '{model_id}' is offline or not installed in Ollama.")
+            except KeyError:
+                raise ValueError(f"Requested model '{model_id}' is not configured in SOAR.")
+
+        # Resolve uploaded files and inject their real storage paths into the prompt
+        if attached_file_ids:
+            file_context = self._resolve_uploaded_files(attached_file_ids)
+            if file_context:
+                task = file_context + "\n" + task
+
         active_run_id = run_id or str(uuid.uuid4())
         if self.emitter:
             self.emitter.emit(
@@ -288,24 +434,89 @@ class Orchestrator:
             )
 
         if profile.execution_mode == "direct_answer":
-            return self.handle_direct_answer(task, profile, run_id=active_run_id)
+            return self.handle_direct_answer(task, profile, run_id=active_run_id, model_id=model_id)
         elif profile.execution_mode == "code":
-            return self.handle_coding(task, profile, run_id=active_run_id)
+            return self.handle_coding(task, profile, run_id=active_run_id, model_id=model_id)
         else:
             # Multi-step Agent execution
+            # Determine which model the agent will actually use for planning/generation
+            chosen_agent_model = model_id or self.model_manager.default_model_name
             if self.emitter:
                 self.emitter.emit(
                     stage=EventStage.MODEL_SELECTING,
                     status=EventStatus.COMPLETED,
-                    message="Model selected — qwen3:1.7b",
-                    metadata={"selected_model": "qwen3:1.7b", "routing_mode": "agent"},
+                    message=f"Model selected — {chosen_agent_model}",
+                    metadata={"selected_model": chosen_agent_model, "routing_mode": "manual" if model_id else "agent"},
                     run_id=active_run_id,
                 )
-            state = self.agent.run(task)
+            state = self.agent.run(task, run_id=active_run_id, model_id=model_id)
+
+            # Resolve actual model used: prefer what the planner's generate() routed to
+            # model_manager.generate() uses route_by_id (if model_id) or route() (if None)
+            if model_id:
+                actual_agent_model = model_id
+            else:
+                try:
+                    routed = self.model_manager.router.route(task_type="general")
+                    actual_agent_model = routed.model_id
+                except Exception:
+                    actual_agent_model = chosen_agent_model
+
+            # Register any generated files (pdf/docx) into LocalFileStorage. This
+            # is deliberately best-effort: document creation already succeeded,
+            # so storage indexing must not convert a successful task into a 500.
+            try:
+                generated_files = self._register_generated_files(state.observations)
+            except Exception as e:
+                logger.exception("Generated file registration failed after task completion: %s", e)
+                generated_files = []
+
+            # Synthesize user-facing response from agent observations (deduplicating created documents)
+            seen_files = set()
+            response_chunks = []
+            for obs in state.observations:
+                tool = obs.get("tool")
+                args = obs.get("arguments", {})
+                res = obs.get("result", "")
+                if tool in ("pdf_creator", "docx_creator"):
+                    out_path = args.get("output_path", "")
+                    if out_path and out_path in seen_files:
+                        continue
+                    if out_path:
+                        seen_files.add(out_path)
+                    title = args.get("title", "")
+                    content = args.get("content", "")
+                    if title:
+                        response_chunks.append(f"## {title}\n\n{content}")
+                    elif content:
+                        response_chunks.append(content)
+                    if out_path:
+                        response_chunks.append(f"\n> 📄 **Document Saved:** `{out_path}` ({res})")
+                elif tool == "python_sandbox":
+                    code = args.get("code", "")
+                    if code:
+                        response_chunks.append(f"```python\n{code}\n```")
+                    if res:
+                        response_chunks.append(f"**Output:**\n```\n{res}\n```")
+                elif tool == "search_knowledge":
+                    if isinstance(res, dict) and res.get("status") == "success":
+                        results = res.get("results", [])
+                        if results:
+                            response_chunks.append(f"**Retrieved {len(results)} relevant knowledge source(s).**")
+                elif res and isinstance(res, str) and not res.startswith("Successfully created"):
+                    response_chunks.append(res)
+
+            if response_chunks:
+                agent_response = "\n\n".join(response_chunks)
+            elif state.status == "completed":
+                agent_response = "Agent workflow completed successfully."
+            else:
+                agent_response = "Agent encountered an error during workflow execution."
+
             return {
                 "run_id": active_run_id,
                 "status": state.status,
-                "response": "Agent workflow completed." if state.status == "completed" else "Agent encountered an error.",
+                "response": agent_response,
                 "execution_mode": "agent",
                 "task_profile": profile.to_dict(),
                 "agent_state": {
@@ -314,11 +525,12 @@ class Orchestrator:
                     "results": state.results,
                 },
                 "model": {
-                    "requested": "qwen3:1.7b",
-                    "actual": "qwen3:1.7b",
+                    "requested": chosen_agent_model,
+                    "actual": actual_agent_model,
                     "fallback_used": False,
                     "fallback_reason": None,
                 },
+                "generated_files": generated_files,
                 "events": self.emitter.get_events_for_run(active_run_id) if (self.emitter and active_run_id) else (self.emitter.get_event_dicts() if self.emitter else []),
             }
 
@@ -359,7 +571,7 @@ class Orchestrator:
                     metadata={"selected_model": "qwen3:1.7b", "routing_mode": "agent"},
                     run_id=run_id,
                 )
-            state = self.agent.run(task)
+            state = self.agent.run(task, run_id=run_id)
             if self.emitter:
                 state.events = self.emitter.get_events()
             return state

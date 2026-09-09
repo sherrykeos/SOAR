@@ -3,8 +3,7 @@ from typing import Optional
 from app.config import SOARConfig, get_config, resolve_project_path
 from app.database.repository import DatabaseManager
 from app.models.manager import ModelManager
-from app.orchestrator.events import ProgressEventEmitter
-from app.orchestrator.orchestrator import Orchestrator
+from app.orchestrator import Orchestrator, ProgressEventEmitter
 from app.storage.local import LocalFileStorage
 
 # Singletons for application lifecycle
