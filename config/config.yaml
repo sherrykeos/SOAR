@@ -1,0 +1,154 @@
+# ==============================================================================
+# SOAR — Sovereign On-premise Agentic Reasoning
+# Central Application Configuration
+# ==============================================================================
+
+app:
+  name: "SOAR"
+  environment: "development"
+  debug: false
+
+# ------------------------------------------------------------------------------
+# Model Pool Configuration (Dynamically Loaded)
+# Any model supported by an existing provider (e.g. Ollama) can be added here
+# without modifying Python source code.
+#
+# Available Capabilities:
+#   - general    (Fast Q&A, simple tasks, default fallback)
+#   - reasoning  (Complex multi-step planning, analysis)
+#   - coding     (Python code generation & refactoring)
+#   - vision     (Image understanding, OCR, multimodal analysis)
+#   - document   (Document parsing and structuring)
+#
+# Priority: Lower integer = higher priority for that capability.
+# ------------------------------------------------------------------------------
+models:
+  # 1. Primary Fast General & Simple Reasoning Model
+  - id: "qwen3:1.7b"
+    provider: "ollama"
+    capabilities:
+      - "general"
+      - "reasoning"
+    priority: 10
+    enabled: true
+    timeout: 180
+
+  # 2. Hard Reasoning & Complex Multi-Step Analysis Model
+  - id: "qwen2:4b"
+    provider: "ollama"
+    capabilities:
+      - "reasoning"
+    priority: 20
+    enabled: true
+    timeout: 15
+
+  # 3. Dedicated Python Coding Model
+  - id: "qwen2.5-coder:1.5b"
+    provider: "ollama"
+    capabilities:
+      - "coding"
+    priority: 15
+    enabled: true
+    timeout: 180
+
+  # 4. Local Multimodal Vision & OCR Model
+  - id: "qwen2.5vl:3b"
+    provider: "ollama"
+    capabilities:
+      - "vision"
+    priority: 15
+    enabled: true
+    timeout: 180
+
+# ------------------------------------------------------------------------------
+# Local Ollama Inference Server Settings
+# ------------------------------------------------------------------------------
+ollama:
+  base_url: "http://localhost:11434"
+  timeout: 180.0
+
+# ------------------------------------------------------------------------------
+# Managed Local File Storage
+# ------------------------------------------------------------------------------
+storage:
+  root: "./data/files"
+  max_file_size_bytes: 52428800  # 50 MB
+  allow_empty: true
+
+# ------------------------------------------------------------------------------
+# SQLite Metadata Database
+# ------------------------------------------------------------------------------
+database:
+  path: "./data/soar.db"
+
+# ------------------------------------------------------------------------------
+# ChromaDB Local Vector Store
+# ------------------------------------------------------------------------------
+vector_store:
+  backend: "chroma"
+  path: "./data/chroma"
+  collection_name: "soar_knowledge"
+
+# ------------------------------------------------------------------------------
+# Local Embedding Model (BGE-M3)
+# ------------------------------------------------------------------------------
+embeddings:
+  model_name_or_path: "BAAI/bge-m3"
+  dimension: 1024
+  device: null  # null = auto-detect (cuda if available, else cpu)
+  normalize_embeddings: true
+  batch_size: 32
+
+# ------------------------------------------------------------------------------
+# Local Vision Processor Settings
+# ------------------------------------------------------------------------------
+vision:
+  model: "qwen2.5vl:3b"
+  base_url: "http://localhost:11434"
+  backend: "ollama"
+  timeout: 180
+  temperature: 0.2
+
+# ------------------------------------------------------------------------------
+# Knowledge Ingestion & Retrieval (RAG) Settings
+# ------------------------------------------------------------------------------
+rag:
+  top_k: 5
+  chunk_size: 500
+  chunk_overlap: 50
+
+# ------------------------------------------------------------------------------
+# Agent & Orchestration Limits
+# ------------------------------------------------------------------------------
+agent:
+  max_iterations: 5
+  default_model_id: "qwen3:1.7b"
+  hard_model_timeout: 15.0
+
+# ------------------------------------------------------------------------------
+# Python Sandbox Execution Settings
+# ------------------------------------------------------------------------------
+sandbox:
+  root: "./sandbox"
+  timeout: 10
+
+# ------------------------------------------------------------------------------
+# Execution-Progress Event System
+# ------------------------------------------------------------------------------
+events:
+  enabled: true
+
+# ------------------------------------------------------------------------------
+# Security & Air-Gap Policy
+# Note: 'allow_external_network' is an internal application-level policy flag.
+# ------------------------------------------------------------------------------
+security:
+  allow_external_network: false
+
+# ------------------------------------------------------------------------------
+# API Layer Configuration (Reserved for upcoming API Milestone)
+# ------------------------------------------------------------------------------
+api:
+  host: "127.0.0.1"
+  port: 8000
+  reload: true

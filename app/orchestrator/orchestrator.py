@@ -37,11 +37,21 @@ class Orchestrator:
         model_manager: ModelManager | None = None,
         task_classifier: TaskClassifier | None = None,
         emitter: ProgressEventEmitter | None = None,
-        max_iterations: int = 5,
+        max_iterations: Optional[int] = None,
+        config: Optional[Any] = None,
     ):
-        self.model_manager = model_manager or ModelManager()
+        from app.config import SOARConfig, get_config
+
+        self.config: SOARConfig = config or get_config()
+        self.model_manager = model_manager or ModelManager(config=self.config)
         self.classifier = task_classifier or TaskClassifier()
         self.emitter = emitter or ProgressEventEmitter()
+
+        eff_max_iterations = (
+            max_iterations
+            if max_iterations is not None
+            else getattr(self.config.agent, "max_iterations", 5)
+        )
 
         if tool_registry is None:
             self.tool_registry = ToolRegistry()
@@ -63,7 +73,7 @@ class Orchestrator:
         self.agent = Agent(
             planner=self.planner,
             executor=self.executor,
-            max_iterations=max_iterations,
+            max_iterations=eff_max_iterations,
             emitter=self.emitter,
         )
 

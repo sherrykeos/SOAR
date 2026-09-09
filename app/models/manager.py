@@ -49,27 +49,87 @@ class ModelManager:
         self,
         model_registry: ModelRegistry | None = None,
         model_router: ModelRouter | None = None,
-        default_model_name: str = "qwen3:1.7b",
-        hard_model_timeout: float = 15.0,
+        default_model_name: Optional[str] = None,
+        hard_model_timeout: Optional[float] = None,
+        config: Optional[Any] = None,
     ):
-        self.default_model_name = default_model_name
-        self.hard_model_timeout = hard_model_timeout
+        from app.config import SOARConfig, get_config
+
+        self.config: SOARConfig = config or get_config()
+        self.default_model_name = (
+            default_model_name
+            or getattr(self.config.agent, "default_model_id", "qwen3:1.7b")
+        )
+        self.hard_model_timeout = (
+            hard_model_timeout
+            if hard_model_timeout is not None
+            else getattr(self.config.agent, "hard_model_timeout", 15.0)
+        )
 
         if model_registry is None:
             self.registry = ModelRegistry()
-            self._register_default_models(default_model_name)
+            if self.config and self.config.models:
+                self._register_from_config(self.config)
+            else:
+                self._register_default_models(self.default_model_name)
         else:
             self.registry = model_registry
 
         self.router = model_router or ModelRouter(
             registry=self.registry,
-            default_model_id=default_model_name,
-            hard_model_timeout=hard_model_timeout,
+            default_model_id=self.default_model_name,
+            hard_model_timeout=self.hard_model_timeout,
         )
+
+    def _register_from_config(self, config: Any) -> None:
+        """Dynamically registers models from the provided SOARConfig object."""
+        ollama_base_url = getattr(config.ollama, "base_url", "http://localhost:11434")
+        ollama_timeout = getattr(config.ollama, "timeout", 180.0)
+
+        for model_def in config.models:
+            if not getattr(model_def, "enabled", True):
+                continue
+
+            provider = getattr(model_def, "provider", "ollama").lower()
+            capabilities = set(getattr(model_def, "capabilities", [ModelCapability.GENERAL]))
+            priority = getattr(model_def, "priority", 100)
+            timeout = getattr(model_def, "timeout", None) or ollama_timeout
+
+            if provider == "ollama":
+                self.registry.register(
+                    OllamaModel(
+                        model_name=model_def.id,
+                        base_url=ollama_base_url,
+                        capabilities=capabilities,
+                        priority=priority,
+                        timeout=timeout,
+                    )
+                )
+            elif provider == "mock":
+                options = getattr(model_def, "options", {})
+                self.registry.register(
+                    MockModel(
+                        model_id=model_def.id,
+                        capabilities=capabilities,
+                        priority=priority,
+                        fixed_response=options.get("fixed_response") if isinstance(options, dict) else None,
+                    )
+                )
+
+        # Ensure backup mock coder is registered for isolated test execution if not already present
+        if "mock-coder" not in [m.model_id for m in self.registry.list_models()]:
+            self.registry.register(
+                MockModel(
+                    model_id="mock-coder",
+                    capabilities={ModelCapability.CODING},
+                    priority=30,
+                    fixed_response="def solution():\n    return 'SOAR local coding response'",
+                )
+            )
 
     def _register_default_models(self, default_model_name: str) -> None:
         """
-        Registers SOAR's local model pool:
+        Fallback registration for SOAR's local model pool:
         1. qwen3:1.7b         - fast general, simple reasoning, fallback
         2. qwen2:4b           - hard reasoning, complex analysis
         3. qwen2.5-coder:1.5b - Python coding

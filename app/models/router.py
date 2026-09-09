@@ -74,35 +74,36 @@ class ModelRouter:
         fallback_id = fallback_model_id or self.default_model_id
         timeout_sec = 180.0
 
-        # 1. Determine requested target model ID based on task profile
+        # 1. Determine target capability and timeout from task profile
         if getattr(profile, "requires_coding", False):
-            requested_model_id = "qwen2.5-coder:1.5b"
             target_capability = ModelCapability.CODING
+            candidates = self.registry.find_by_capability(target_capability)
         elif getattr(profile, "requires_vision", False):
-            requested_model_id = "qwen2.5vl:3b"
             target_capability = ModelCapability.VISION
+            candidates = self.registry.find_by_capability(target_capability)
         elif getattr(profile, "complexity", "simple") == "hard":
-            requested_model_id = "qwen2:4b"
             target_capability = ModelCapability.REASONING
             timeout_sec = self.hard_model_timeout
+            reasoning_candidates = self.registry.find_by_capability(target_capability)
+            # Prioritize dedicated reasoning models (models without general capability) for hard tasks
+            dedicated_reasoners = [
+                m for m in reasoning_candidates if ModelCapability.GENERAL not in m.capabilities
+            ]
+            candidates = dedicated_reasoners if dedicated_reasoners else reasoning_candidates
         else:
-            # Simple / medium reasoning, calculation, direct Q&A -> fast model
-            requested_model_id = "qwen3:1.7b"
+            # Simple / medium reasoning, calculation, direct Q&A -> general fast model
             target_capability = ModelCapability.GENERAL
+            candidates = self.registry.find_by_capability(target_capability)
 
-        # 2. Check if requested model exists in registry and is available locally
+        # 2. Dynamically resolve requested model ID
+        requested_model_id = candidates[0].model_id if candidates else self.default_model_id
+
+        # 3. Check if top candidate is available locally
         candidate_model: Optional[ModelAdapter] = None
-        try:
-            candidate = self.registry.get(requested_model_id)
+        for candidate in candidates:
             if candidate.is_available():
                 candidate_model = candidate
-        except KeyError:
-            # If not found by exact ID, check by capability
-            capability_matches = self.registry.find_by_capability(target_capability)
-            for m in capability_matches:
-                if m.is_available():
-                    candidate_model = m
-                    break
+                break
 
         if candidate_model is not None:
             return ModelRouteDecision(
