@@ -13,6 +13,7 @@ class MockModel(ModelAdapter):
         priority: int = 100,
         fixed_response: str = "Mock response from SOAR local model.",
         response_fn: Callable[[str], str] | None = None,
+        available: bool = True,
     ):
         self._model_id = model_id
         self._provider = provider
@@ -20,6 +21,7 @@ class MockModel(ModelAdapter):
         self._priority = priority
         self.fixed_response = fixed_response
         self.response_fn = response_fn
+        self._available = available
 
     @property
     def metadata(self) -> ModelMetadata:
@@ -30,6 +32,9 @@ class MockModel(ModelAdapter):
             priority=self._priority,
         )
 
+    def is_available(self) -> bool:
+        return self._available
+
     def generate(
         self,
         prompt: str,
@@ -37,6 +42,8 @@ class MockModel(ModelAdapter):
         think: bool = False,
         **kwargs: Any,
     ) -> str:
+        if not self._available:
+            raise RuntimeError(f"Mock model '{self._model_id}' is marked unavailable.")
         if self.response_fn is not None:
             return self.response_fn(prompt)
         return self.fixed_response

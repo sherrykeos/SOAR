@@ -43,6 +43,10 @@ class ModelAdapter(ABC):
     def priority(self) -> int:
         return self.metadata.priority
 
+    def is_available(self) -> bool:
+        """Returns True if the model is currently available locally."""
+        return True
+
     @abstractmethod
     def generate(
         self,
