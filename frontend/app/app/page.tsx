@@ -20,9 +20,9 @@ export default function WorkbenchHomePage() {
   const activeTask = activeRunId ? getTaskByRunId(activeRunId) : sessionTasks[0];
 
   return (
-    <div className="flex-1 flex flex-col xl:flex-row min-w-0 h-[calc(100vh-3.5rem)] overflow-hidden">
+    <div className="flex-1 flex flex-col xl:flex-row min-w-0 min-h-0 h-full overflow-hidden">
       {/* Center Conversational Chat Workspace */}
-      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0 h-full overflow-hidden relative">
         {/* Backend Warning Banner if offline */}
         {!isBackendOnline && (
           <div className="p-3 bg-[#EF4444]/10 border-b border-[#EF4444]/30 flex items-center justify-between gap-3 text-xs font-mono text-[#EF4444] shrink-0 z-10 px-4 sm:px-6">
@@ -48,16 +48,25 @@ export default function WorkbenchHomePage() {
 
       {/* Collapsible Right Sidebar: Run Inspector & Checkpoint DAG */}
       {inspectorOpen && (
-        <div className="w-full xl:w-96 shrink-0 xl:border-l border-[#202A22] bg-[#0D120F] h-full overflow-hidden transition-all duration-200 shadow-2xl">
-          <RunInspector
-            runId={activeTask?.run_id || activeRunId || null}
-            taskStatus={activeTask?.status || "idle"}
-            initialEvents={activeTask?.events || []}
-            model={activeTask?.model}
-            durationSeconds={activeTask?.duration_seconds}
-            onClose={() => setInspectorOpen(false)}
+        <>
+          {/* Mobile / Tablet backdrop overlay */}
+          <div
+            onClick={() => setInspectorOpen(false)}
+            className="xl:hidden fixed inset-0 bg-black/60 backdrop-blur-xs z-20"
+            aria-hidden="true"
           />
-        </div>
+
+          <div className="fixed inset-y-14 right-0 z-30 w-full sm:w-96 xl:relative xl:inset-y-0 xl:w-96 shrink-0 xl:border-l border-[#202A22] bg-[#0D120F] h-[calc(100vh-3.5rem)] xl:h-full overflow-hidden transition-all duration-200 shadow-2xl flex flex-col">
+            <RunInspector
+              runId={activeTask?.run_id || activeRunId || null}
+              taskStatus={activeTask?.status || "idle"}
+              initialEvents={activeTask?.events || []}
+              model={activeTask?.model}
+              durationSeconds={activeTask?.duration_seconds}
+              onClose={() => setInspectorOpen(false)}
+            />
+          </div>
+        </>
       )}
     </div>
   );

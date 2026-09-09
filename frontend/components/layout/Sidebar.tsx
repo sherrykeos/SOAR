@@ -21,17 +21,11 @@ import {
 import { Logo } from "@/components/ui/Logo";
 import { useWorkbench } from "@/context/WorkbenchContext";
 
-const emptySubscribe = () => () => {};
-
 export function Sidebar() {
-  const isClient = React.useSyncExternalStore(
-    emptySubscribe,
-    () => true,
-    () => false
-  );
   const pathname = usePathname();
   const router = useRouter();
   const {
+    isHydrated,
     sessions,
     activeSessionId,
     setActiveSessionId,
@@ -51,7 +45,7 @@ export function Sidebar() {
       href: "/app",
       icon: MessageSquare,
       exact: true,
-      badge: isClient && sessions.length > 0 ? `${sessions.length}` : undefined,
+      badge: isHydrated && sessions.length > 0 ? `${sessions.length}` : undefined,
     },
     {
       name: "Tasks",
@@ -64,19 +58,42 @@ export function Sidebar() {
       name: "Models",
       href: "/app/models",
       icon: Cpu,
-      badge: isClient && models.length > 0 ? `${models.length}` : undefined,
+      badge: isHydrated && models.length > 0 ? `${models.length}` : undefined,
     },
     { name: "Tools", href: "/app/tools", icon: Wrench },
     { name: "Settings", href: "/app/settings", icon: Settings },
   ];
 
-  const handleNewChat = () => {
+  const handleNewChat = React.useCallback(() => {
+    const active = sessions.find((s) => s.id === activeSessionId) || sessions[0];
+    if (active && active.messages.length === 0) {
+      setActiveSessionId(active.id);
+      if (pathname !== "/app") {
+        router.push("/app");
+      }
+      return;
+    }
     const newId = createNewSession();
     setActiveSessionId(newId);
     if (pathname !== "/app") {
       router.push("/app");
     }
-  };
+  }, [sessions, activeSessionId, createNewSession, setActiveSessionId, pathname, router]);
+
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        (e.metaKey && e.key.toLowerCase() === "n") ||
+        (e.altKey && e.key.toLowerCase() === "n") ||
+        (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "n")
+      ) {
+        e.preventDefault();
+        handleNewChat();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleNewChat]);
 
   const handleSelectSession = (id: string) => {
     setActiveSessionId(id);
@@ -92,7 +109,7 @@ export function Sidebar() {
 
   return (
     <aside
-      className={`bg-[#070A08] border-r border-[#202A22] flex flex-col justify-between p-3 select-none shrink-0 h-screen sticky top-0 font-sans transition-all duration-200 z-20 ${
+      className={`bg-[#070A08] border-r border-[#202A22] flex flex-col justify-between p-3 select-none shrink-0 h-full font-sans transition-all duration-200 z-20 ${
         sidebarCollapsed ? "w-[68px]" : "w-64"
       }`}
     >
@@ -217,11 +234,13 @@ export function Sidebar() {
           <div className="flex-1 flex flex-col min-h-0 pt-2 border-t border-[#202A22]/50 overflow-hidden">
             <div className="px-2 pb-1 text-[10px] uppercase font-bold tracking-wider text-[#657066] font-mono flex items-center justify-between">
               <span>CONVERSATIONS</span>
-              <span className="text-[9px] text-[#657066]">{sessions.length}</span>
+              <span className="text-[9px] text-[#657066]" suppressHydrationWarning>
+                {isHydrated ? sessions.length : 0}
+              </span>
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-0.5 pr-1 text-xs">
-              {sessions.length === 0 ? (
+              {!isHydrated || sessions.length === 0 ? (
                 <div className="px-2 py-4 text-center text-[11px] text-[#657066] font-mono">
                   No active chats yet.
                   <br />

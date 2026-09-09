@@ -7,6 +7,7 @@ import React, {
   useEffect,
   useCallback,
   useMemo,
+  useRef,
   useSyncExternalStore,
 } from "react";
 import type {
@@ -24,6 +25,7 @@ interface WorkbenchContextType {
   health: HealthResponse | null;
   isBackendOnline: boolean;
   checkHealth: () => Promise<void>;
+  isHydrated: boolean;
 
   // Models
   models: ModelItem[];
@@ -37,10 +39,11 @@ interface WorkbenchContextType {
   sessions: ChatSession[];
   activeSessionId: string | null;
   setActiveSessionId: (id: string | null) => void;
-  createNewSession: (title?: string, model?: string) => string;
+  createNewSession: (title?: string, model?: string, initialMessages?: ChatMessage[]) => string;
   deleteSession: (sessionId: string) => void;
   renameSession: (sessionId: string, newTitle: string) => void;
   addMessageToSession: (sessionId: string, message: ChatMessage) => void;
+  addMessagesToSession: (sessionId: string, messages: ChatMessage[]) => void;
   updateMessageInSession: (
     sessionId: string,
     messageId: string,
@@ -75,6 +78,7 @@ const WorkbenchContext = createContext<WorkbenchContextType | undefined>(undefin
 
 const LOCAL_STORAGE_SESSIONS_KEY = "soar_chat_sessions_v2";
 const LOCAL_STORAGE_TASKS_KEY = "soar_session_tasks_v1";
+const LOCAL_STORAGE_ACTIVE_SESSION_KEY = "soar_active_session_id_v1";
 
 function subscribeStore(callback: () => void) {
   if (typeof window === "undefined") return () => {};
@@ -108,14 +112,60 @@ function getServerSnapshot(): string {
   return "[]";
 }
 
+const emptySubscribe = () => () => {};
+
+const DEFAULT_CONFIGURED_MODELS: ModelItem[] = [
+  {
+    id: "qwen3:1.7b",
+    provider: "ollama",
+    capabilities: ["general", "reasoning"],
+    enabled: true,
+    available: true,
+    priority: 10,
+    timeout: 180,
+  },
+  {
+    id: "qwen3:4b",
+    provider: "ollama",
+    capabilities: ["reasoning"],
+    enabled: true,
+    available: true,
+    priority: 20,
+    timeout: 15,
+  },
+  {
+    id: "qwen2.5-coder:1.5b",
+    provider: "ollama",
+    capabilities: ["coding"],
+    enabled: true,
+    available: true,
+    priority: 15,
+    timeout: 180,
+  },
+  {
+    id: "qwen2.5vl:3b",
+    provider: "ollama",
+    capabilities: ["vision"],
+    enabled: true,
+    available: true,
+    priority: 15,
+    timeout: 180,
+  },
+];
+
 export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
+  const isHydrated = useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [isBackendOnline, setIsBackendOnline] = useState<boolean>(true);
 
-  const [models, setModels] = useState<ModelItem[]>([]);
-  const [defaultModel, setDefaultModel] = useState<string>("auto");
+  const [models, setModels] = useState<ModelItem[]>(DEFAULT_CONFIGURED_MODELS);
+  const [defaultModel, setDefaultModel] = useState<string>("qwen3:1.7b");
   const [selectedModel, setSelectedModel] = useState<string>("auto");
-  const [isLoadingModels, setIsLoadingModels] = useState<boolean>(true);
+  const [isLoadingModels, setIsLoadingModels] = useState<boolean>(false);
 
   // Chat Sessions store
   const rawSessionsJson = useSyncExternalStore(
@@ -149,22 +199,85 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
     }
   }, [rawTasksJson]);
 
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [selectedSessionId, setSelectedSessionIdState] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return localStorage.getItem(LOCAL_STORAGE_ACTIVE_SESSION_KEY) || null;
+    } catch {
+      return null;
+    }
+  });
+
+  const setActiveSessionId = useCallback((id: string | null) => {
+    setSelectedSessionIdState(id);
+    try {
+      if (typeof window !== "undefined") {
+        if (id) {
+          localStorage.setItem(LOCAL_STORAGE_ACTIVE_SESSION_KEY, id);
+        } else {
+          localStorage.removeItem(LOCAL_STORAGE_ACTIVE_SESSION_KEY);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Compute effective activeSessionId without setting state inside an effect
+  const activeSessionId = useMemo(() => {
+    if (selectedSessionId && sessions.some((s) => s.id === selectedSessionId)) {
+      return selectedSessionId;
+    }
+    return sessions[0]?.id || null;
+  }, [selectedSessionId, sessions]);
+
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState<boolean>(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState<boolean>(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [inspectorOpen, setInspectorOpen] = useState<boolean>(true);
 
+  // In-memory ref to prevent stale closures when mutating sessions in quick succession
+  const sessionsRef = useRef<ChatSession[]>([]);
+
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
+
   // Persist sessions
   const persistSessions = useCallback((updated: ChatSession[]) => {
     try {
-      localStorage.setItem(LOCAL_STORAGE_SESSIONS_KEY, JSON.stringify(updated.slice(0, 100)));
-      window.dispatchEvent(new Event("soar-store-change"));
+      sessionsRef.current = updated;
+      if (typeof window !== "undefined") {
+        localStorage.setItem(LOCAL_STORAGE_SESSIONS_KEY, JSON.stringify(updated.slice(0, 100)));
+        window.dispatchEvent(new Event("soar-store-change"));
+      }
     } catch {
       // ignore
     }
   }, []);
+
+  // Synchronous accessor for latest session list
+  const getLatestSessions = useCallback((): ChatSession[] => {
+    if (sessionsRef.current && sessionsRef.current.length > 0) {
+      return sessionsRef.current;
+    }
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem(LOCAL_STORAGE_SESSIONS_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            sessionsRef.current = parsed;
+            return parsed;
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return sessions;
+  }, [sessions]);
 
   // Persist tasks
   const persistTasks = useCallback((tasks: ClientTaskRecord[]) => {
@@ -176,19 +289,30 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // In-flight guards to avoid duplicated requests in React StrictMode
+  const isCheckingHealthRef = useRef<boolean>(false);
+  const isLoadingModelsRef = useRef<boolean>(false);
+  const hasInitializedRef = useRef<boolean>(false);
+
   // Check backend health
   const checkHealth = useCallback(async () => {
+    if (isCheckingHealthRef.current) return;
+    isCheckingHealthRef.current = true;
     try {
       const res = await getHealth();
       setHealth(res);
       setIsBackendOnline(true);
     } catch {
       setIsBackendOnline(false);
+    } finally {
+      isCheckingHealthRef.current = false;
     }
   }, []);
 
   // Fetch models from GET /api/models
   const refreshModels = useCallback(async () => {
+    if (isLoadingModelsRef.current) return;
+    isLoadingModelsRef.current = true;
     setIsLoadingModels(true);
     try {
       const res = await listModels();
@@ -200,27 +324,21 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
       // handled gracefully
     } finally {
       setIsLoadingModels(false);
+      isLoadingModelsRef.current = false;
     }
   }, []);
 
   // Initial data loading
   useEffect(() => {
+    if (hasInitializedRef.current) return;
+    hasInitializedRef.current = true;
+
     let isSubscribed = true;
 
     const initialize = async () => {
       await checkHealth();
-      try {
-        const res = await listModels();
-        if (isSubscribed) {
-          setModels(res.models || []);
-          if (res.default_model) {
-            setDefaultModel(res.default_model);
-          }
-          setIsLoadingModels(false);
-        }
-      } catch {
-        if (isSubscribed) setIsLoadingModels(false);
-      }
+      if (!isSubscribed) return;
+      await refreshModels();
     };
 
     initialize();
@@ -233,7 +351,7 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
       isSubscribed = false;
       clearInterval(interval);
     };
-  }, [checkHealth]);
+  }, [checkHealth, refreshModels]);
 
   // Global Command Palette Shortcut (Cmd+K / Ctrl+K)
   useEffect(() => {
@@ -250,7 +368,8 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
   // --- Session Management Functions ---
 
   const createNewSession = useCallback(
-    (title?: string, modelChoice?: string): string => {
+    (title?: string, modelChoice?: string, initialMessages?: ChatMessage[]): string => {
+      const current = getLatestSessions();
       const newId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       const newSession: ChatSession = {
         id: newId,
@@ -258,21 +377,31 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         model: modelChoice || selectedModel || defaultModel,
-        messages: [],
+        messages: initialMessages || [],
       };
 
-      const updated = [newSession, ...sessions];
+      // Filter out any empty placeholder sessions to keep session list clean
+      const filtered = current.filter((s) => s.messages.length > 0);
+      const updated = [newSession, ...filtered];
       persistSessions(updated);
       setActiveSessionId(newId);
-      setActiveRunId(null);
+
+      if (initialMessages && initialMessages.length > 0) {
+        const lastRunId = [...initialMessages].reverse().find((m) => m.run_id)?.run_id;
+        if (lastRunId) setActiveRunId(lastRunId);
+      } else {
+        setActiveRunId(null);
+      }
+
       return newId;
     },
-    [sessions, selectedModel, defaultModel, persistSessions]
+    [getLatestSessions, selectedModel, defaultModel, persistSessions, setActiveSessionId]
   );
 
   const deleteSession = useCallback(
     (sessionId: string) => {
-      const updated = sessions.filter((s) => s.id !== sessionId);
+      const current = getLatestSessions();
+      const updated = current.filter((s) => s.id !== sessionId);
       persistSessions(updated);
 
       if (activeSessionId === sessionId) {
@@ -283,69 +412,87 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
         }
       }
     },
-    [sessions, activeSessionId, persistSessions]
+    [getLatestSessions, activeSessionId, persistSessions, setActiveSessionId]
   );
 
   const renameSession = useCallback(
     (sessionId: string, newTitle: string) => {
-      const updated = sessions.map((s) =>
+      const current = getLatestSessions();
+      const updated = current.map((s) =>
         s.id === sessionId
           ? { ...s, title: newTitle.trim() || s.title, updated_at: new Date().toISOString() }
           : s
       );
       persistSessions(updated);
     },
-    [sessions, persistSessions]
+    [getLatestSessions, persistSessions]
   );
 
-  const addMessageToSession = useCallback(
-    (sessionId: string, message: ChatMessage) => {
-      const targetSession = sessions.find((s) => s.id === sessionId);
+  const addMessagesToSession = useCallback(
+    (sessionId: string, newMessages: ChatMessage[]) => {
+      if (!newMessages || newMessages.length === 0) return;
+      const current = getLatestSessions();
+      const targetSession = current.find((s) => s.id === sessionId);
+
       if (!targetSession) {
-        // Create session if it doesn't exist yet
+        const firstUser = newMessages.find((m) => m.role === "user");
+        const title = firstUser
+          ? firstUser.content.slice(0, 36) + (firstUser.content.length > 36 ? "..." : "")
+          : "New Chat";
         const newSession: ChatSession = {
           id: sessionId,
-          title: message.role === "user" ? message.content.slice(0, 36) : "New Chat",
+          title,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-          model: message.model || selectedModel || defaultModel,
-          messages: [message],
+          model: newMessages[0]?.model || selectedModel || defaultModel,
+          messages: newMessages,
         };
-        persistSessions([newSession, ...sessions]);
+        persistSessions([newSession, ...current]);
         setActiveSessionId(sessionId);
-        if (message.run_id) setActiveRunId(message.run_id);
+        const lastRunId = [...newMessages].reverse().find((m) => m.run_id)?.run_id;
+        if (lastRunId) setActiveRunId(lastRunId);
         return;
       }
 
       let sessionTitle = targetSession.title;
+      const firstUser = newMessages.find((m) => m.role === "user");
       if (
-        (sessionTitle === "New Chat" || sessionTitle === "Untitled Session") &&
-        message.role === "user"
+        (sessionTitle === "New Chat" || sessionTitle === "Untitled Session" || !sessionTitle) &&
+        firstUser
       ) {
-        sessionTitle = message.content.slice(0, 36) + (message.content.length > 36 ? "..." : "");
+        sessionTitle = firstUser.content.slice(0, 36) + (firstUser.content.length > 36 ? "..." : "");
       }
 
-      const updated = sessions.map((s) => {
+      const updated = current.map((s) => {
         if (s.id === sessionId) {
           return {
             ...s,
             title: sessionTitle,
             updated_at: new Date().toISOString(),
-            messages: [...s.messages, message],
+            messages: [...s.messages, ...newMessages],
           };
         }
         return s;
       });
 
       persistSessions(updated);
-      if (message.run_id) setActiveRunId(message.run_id);
+      const lastRunId = [...newMessages].reverse().find((m) => m.run_id)?.run_id;
+      if (lastRunId) setActiveRunId(lastRunId);
     },
-    [sessions, selectedModel, defaultModel, persistSessions]
+    [getLatestSessions, selectedModel, defaultModel, persistSessions, setActiveSessionId]
+  );
+
+  const addMessageToSession = useCallback(
+    (sessionId: string, message: ChatMessage) => {
+      addMessagesToSession(sessionId, [message]);
+    },
+    [addMessagesToSession]
   );
 
   const updateMessageInSession = useCallback(
     (sessionId: string, messageId: string, updates: Partial<ChatMessage>) => {
-      const updated = sessions.map((s) => {
+      const current = getLatestSessions();
+      const updated = current.map((s) => {
         if (s.id === sessionId) {
           return {
             ...s,
@@ -360,15 +507,17 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
 
       persistSessions(updated);
     },
-    [sessions, persistSessions]
+    [getLatestSessions, persistSessions]
   );
 
   const getActiveSession = useCallback((): ChatSession | undefined => {
+    const current = getLatestSessions();
     if (activeSessionId) {
-      return sessions.find((s) => s.id === activeSessionId);
+      const found = current.find((s) => s.id === activeSessionId);
+      if (found) return found;
     }
-    return sessions[0];
-  }, [sessions, activeSessionId]);
+    return current[0];
+  }, [getLatestSessions, activeSessionId]);
 
   // Derived unified task list
   const sessionTasks = useMemo<ClientTaskRecord[]>(() => {
@@ -463,6 +612,7 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
         health,
         isBackendOnline,
         checkHealth,
+        isHydrated,
         models,
         defaultModel,
         selectedModel,
@@ -476,6 +626,7 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
         deleteSession,
         renameSession,
         addMessageToSession,
+        addMessagesToSession,
         updateMessageInSession,
         getActiveSession,
         sessionTasks,

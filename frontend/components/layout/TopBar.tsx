@@ -101,7 +101,10 @@ export function TopBar() {
         <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#121812] border border-[#202A22] text-[11px] text-[#9BA79D]">
           <Cpu className="w-3.5 h-3.5 text-[#B8F23D]" />
           <span>Model:</span>
-          <span className="text-[#D5FF78] font-semibold truncate max-w-[140px]">
+          <span
+            suppressHydrationWarning
+            className="text-[#D5FF78] font-semibold truncate max-w-[140px]"
+          >
             {selectedModel === "auto" ? `Auto (${defaultModel})` : selectedModel}
           </span>
         </div>

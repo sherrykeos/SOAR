@@ -5,6 +5,7 @@ export async function createTask(req: TaskRequest): Promise<TaskResponse> {
   return apiClient<TaskResponse>("/tasks", {
     method: "POST",
     body: JSON.stringify(req),
+    timeoutMs: 180000,
   });
 }
 

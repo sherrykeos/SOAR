@@ -30,6 +30,7 @@ export function TaskComposer({ onTaskStarted, className }: TaskComposerProps) {
     setSelectedModel,
     addSessionTask,
     setActiveRunId,
+    setInspectorOpen,
     isBackendOnline,
   } = useWorkbench();
 
@@ -130,6 +131,7 @@ export function TaskComposer({ onTaskStarted, className }: TaskComposerProps) {
 
       addSessionTask(taskRecord);
       setActiveRunId(response.run_id);
+      setInspectorOpen(true);
       onTaskStarted?.(taskRecord);
 
       if (response.status === "failed") {

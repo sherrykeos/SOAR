@@ -24,6 +24,12 @@ import {
   Cpu,
   AlertCircle,
   CheckCircle2,
+  PanelLeft,
+  PanelRight,
+  Plus,
+  Trash2,
+  Edit2,
+  MessageSquare,
 } from "lucide-react";
 import { useWorkbench } from "@/context/WorkbenchContext";
 import { useToast } from "@/components/ui/Toast";
@@ -31,21 +37,30 @@ import { createTask, getTaskEvents } from "@/lib/api/tasks";
 import { uploadFile } from "@/lib/api/files";
 import { formatDuration, formatTimestamp } from "@/lib/utils/formatters";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { GeneratedFileCard } from "./GeneratedFileCard";
 import type { ChatMessage, EventItem } from "@/types";
 import { motion, AnimatePresence } from "framer-motion";
 
 export function ChatInterface() {
   const {
+    isHydrated,
     activeSessionId,
+    setActiveSessionId,
     createNewSession,
-    addMessageToSession,
+    deleteSession,
+    renameSession,
+    addMessagesToSession,
     updateMessageInSession,
     getActiveSession,
     models,
     defaultModel,
     selectedModel,
     setSelectedModel,
+    sidebarCollapsed,
+    setSidebarCollapsed,
+    inspectorOpen,
     setInspectorOpen,
+    setActiveRunId,
   } = useWorkbench();
 
   const { success, error } = useToast();
@@ -58,10 +73,31 @@ export function ChatInterface() {
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [newTitleText, setNewTitleText] = useState("");
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close model dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        modelDropdownRef.current &&
+        !modelDropdownRef.current.contains(event.target as Node)
+      ) {
+        setModelDropdownOpen(false);
+      }
+    };
+    if (modelDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [modelDropdownOpen]);
 
   // Active session
   const activeSession = getActiveSession();
@@ -69,6 +105,25 @@ export function ChatInterface() {
     () => activeSession?.messages || [],
     [activeSession?.messages]
   );
+
+  const handleCreateNewChat = () => {
+    if (activeSession && activeSession.messages.length === 0) {
+      textareaRef.current?.focus();
+      return;
+    }
+    const newId = createNewSession();
+    setActiveSessionId(newId);
+    setPrompt("");
+    textareaRef.current?.focus();
+  };
+
+  const handleRenameSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (activeSession && newTitleText.trim()) {
+      renameSession(activeSession.id, newTitleText.trim());
+    }
+    setIsRenaming(false);
+  };
 
   // Auto-scroll to bottom of messages
   useEffect(() => {
@@ -93,10 +148,13 @@ export function ChatInterface() {
     if (!runId) return;
 
     let active = true;
+    let consecutiveErrors = 0;
+    let interval: NodeJS.Timeout | null = null;
 
     const poll = async () => {
       try {
         const res = await getTaskEvents(runId);
+        consecutiveErrors = 0;
         if (active && res && Array.isArray(res.events)) {
           updateMessageInSession(activeSessionId, executingMsgId, {
             events: res.events,
@@ -107,19 +165,24 @@ export function ChatInterface() {
           if (lastEvent?.status === "completed" || lastEvent?.status === "failed") {
             setIsExecuting(false);
             setExecutingMsgId(null);
+            if (interval) clearInterval(interval);
           }
         }
       } catch {
-        // gracefully ignored
+        consecutiveErrors += 1;
+        // Stop polling after consecutive errors (e.g., 404 Not Found)
+        if (consecutiveErrors >= 2 && interval) {
+          clearInterval(interval);
+        }
       }
     };
 
     poll();
-    const interval = setInterval(poll, 1200);
+    interval = setInterval(poll, 1500);
 
     return () => {
       active = false;
-      clearInterval(interval);
+      if (interval) clearInterval(interval);
     };
   }, [isExecuting, executingMsgId, activeSessionId, currentMessages, updateMessageInSession]);
 
@@ -165,15 +228,10 @@ export function ChatInterface() {
     const query = prompt.trim();
     if (!query || isExecuting) return;
 
-    let sessionId = activeSessionId;
-    if (!sessionId || !activeSession) {
-      sessionId = createNewSession(query.slice(0, 36));
-    }
-
-    const taskModel = selectedModel === "auto" ? defaultModel : selectedModel;
+    const requestedModel = selectedModel === "auto" ? null : selectedModel;
     const attachedFileNames = attachedFiles.map((f) => f.name);
 
-    // 1. Add User Message
+    // 1. Prepare User Message
     const userMsgId = `msg_user_${Date.now()}`;
     const userMessage: ChatMessage = {
       id: userMsgId,
@@ -182,30 +240,50 @@ export function ChatInterface() {
       created_at: new Date().toISOString(),
       attached_files: attachedFileNames,
     };
-    addMessageToSession(sessionId, userMessage);
 
-    // 2. Add placeholder Assistant Message
+    // 2. Prepare placeholder Assistant Message (run_id populated once backend returns)
     const asstMsgId = `msg_asst_${Date.now()}`;
     const asstMessage: ChatMessage = {
       id: asstMsgId,
+      run_id: undefined,
       role: "assistant",
       content: "",
       created_at: new Date().toISOString(),
       status: "running",
-      model: taskModel,
+      model: selectedModel === "auto" ? "auto" : selectedModel,
       events: [],
     };
-    addMessageToSession(sessionId, asstMessage);
+
+    // 3. Atomically attach to session or create new session
+    let sessionId = activeSessionId;
+    const currSession = getActiveSession();
+
+    if (!sessionId || !currSession || currSession.messages.length === 0) {
+      if (currSession && currSession.messages.length === 0) {
+        sessionId = currSession.id;
+        renameSession(sessionId, query.slice(0, 36) + (query.length > 36 ? "..." : ""));
+        addMessagesToSession(sessionId, [userMessage, asstMessage]);
+      } else {
+        sessionId = createNewSession(
+          query.slice(0, 36) + (query.length > 36 ? "..." : ""),
+          selectedModel === "auto" ? defaultModel : selectedModel,
+          [userMessage, asstMessage]
+        );
+      }
+    } else {
+      addMessagesToSession(sessionId, [userMessage, asstMessage]);
+    }
 
     setPrompt("");
     setAttachedFiles([]);
     setIsExecuting(true);
     setExecutingMsgId(asstMsgId);
+    setInspectorOpen(true);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
 
-    // 3. Format Multi-Turn Prompt Context
+    // 4. Format Multi-Turn Prompt Context
     let finalPrompt = "";
     const history = currentMessages.slice(-6); // last few turns for context
     if (history.length > 0) {
@@ -225,7 +303,11 @@ export function ChatInterface() {
     try {
       const res = await createTask({
         task: finalPrompt,
-        model: taskModel === "auto" ? null : taskModel,
+        model: requestedModel,
+        // Pass file_ids of successfully uploaded files so backend resolves real paths
+        attached_file_ids: attachedFiles
+          .filter((f) => !!f.id)
+          .map((f) => f.id as string),
       });
 
       const initialEvents: EventItem[] = (res.events || []).map(
@@ -240,13 +322,23 @@ export function ChatInterface() {
         })
       );
 
+      setActiveRunId(res.run_id);
+
       updateMessageInSession(sessionId, asstMsgId, {
         run_id: res.run_id,
         content: res.answer || "",
         status: res.status === "failed" ? "failed" : "completed",
-        model: res.model || taskModel,
-        execution_mode: res.execution_mode || "sandbox",
+        // Use actual model from backend response; fall back to model field
+        model:
+          (res.model_details &&
+            typeof res.model_details.actual === "string" &&
+            res.model_details.actual) ||
+          res.model ||
+          (requestedModel ?? defaultModel),
+        model_details: res.model_details ?? null,
+        execution_mode: res.execution_mode || "direct_answer",
         events: initialEvents,
+        generated_files: res.generated_files ?? [],
         duration_seconds:
           typeof res.model_details === "object" &&
           res.model_details !== null &&
@@ -255,17 +347,14 @@ export function ChatInterface() {
             ? res.model_details.duration_seconds
             : undefined,
       });
-
-      if (res.answer) {
-        setIsExecuting(false);
-        setExecutingMsgId(null);
-      }
     } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Backend unavailable";
       updateMessageInSession(sessionId, asstMsgId, {
-        content: `Error executing request: ${err instanceof Error ? err.message : "Backend unavailable"}`,
+        content: `Error executing request: ${errorMsg}`,
         status: "failed",
       });
-      error("Execution Failed", err instanceof Error ? err.message : "Backend unavailable");
+      error("Execution Failed", errorMsg);
+    } finally {
       setIsExecuting(false);
       setExecutingMsgId(null);
     }
@@ -327,12 +416,106 @@ export function ChatInterface() {
   ];
 
   return (
-    <div className="flex-1 flex flex-col h-[calc(100vh-3.5rem)] min-w-0 bg-[#070A08] relative font-sans">
+    <div className="flex-1 flex flex-col min-w-0 min-h-0 h-full bg-[#070A08] relative font-sans overflow-hidden">
+      {/* Top Session Header Bar (ChatGPT / Claude style) */}
+      <div className="h-12 border-b border-[#202A22] bg-[#070A08]/90 backdrop-blur px-4 flex items-center justify-between shrink-0 z-10 select-none">
+        <div className="flex items-center gap-2 min-w-0">
+          {sidebarCollapsed && (
+            <button
+              onClick={() => setSidebarCollapsed(false)}
+              className="p-1.5 rounded-lg text-[#9BA79D] hover:text-[#D5FF78] hover:bg-[#121812] transition-colors cursor-pointer mr-1"
+              title="Expand sidebar"
+            >
+              <PanelLeft className="w-4 h-4 text-[#B8F23D]" />
+            </button>
+          )}
+
+          {/* Session Title (with inline click-to-rename) */}
+          <div className="flex items-center gap-1.5 min-w-0">
+            {isRenaming ? (
+              <form onSubmit={handleRenameSubmit} className="flex items-center gap-1">
+                <input
+                  type="text"
+                  value={newTitleText}
+                  onChange={(e) => setNewTitleText(e.target.value)}
+                  autoFocus
+                  onBlur={() => handleRenameSubmit()}
+                  className="bg-[#121812] border border-[#B8F23D]/50 text-xs text-[#F1F5ED] px-2 py-1 rounded outline-none font-medium max-w-[200px] sm:max-w-[300px]"
+                />
+              </form>
+            ) : (
+              <div
+                onClick={() => {
+                  if (activeSession) {
+                    setNewTitleText(activeSession.title);
+                    setIsRenaming(true);
+                  }
+                }}
+                className="group flex items-center gap-1.5 cursor-pointer px-1.5 py-1 rounded hover:bg-[#121812] transition"
+                title="Click to rename chat"
+              >
+                <MessageSquare className="w-3.5 h-3.5 text-[#B8F23D] shrink-0" />
+                <span
+                  suppressHydrationWarning
+                  className="text-xs font-semibold text-[#F1F5ED] truncate max-w-[180px] sm:max-w-[300px]"
+                >
+                  {isHydrated && activeSession ? activeSession.title : "New Chat"}
+                </span>
+                <Edit2 className="w-3 h-3 text-[#657066] opacity-0 group-hover:opacity-100 transition" />
+              </div>
+            )}
+
+            {isHydrated && activeSession?.model && (
+              <span className="hidden sm:inline-block font-mono text-[10px] px-1.5 py-0.5 rounded bg-[#121812] text-[#9BA79D] border border-[#202A22]">
+                {activeSession.model}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          {/* New Chat Button */}
+          <button
+            onClick={() => handleCreateNewChat()}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#121812] border border-[#B8F23D]/30 text-[#D5FF78] hover:border-[#B8F23D] hover:bg-[#171E18] text-xs font-semibold transition cursor-pointer"
+            title="Create new chat (⌘N)"
+          >
+            <Plus className="w-3.5 h-3.5 text-[#B8F23D]" />
+            <span className="hidden sm:inline">New Chat</span>
+          </button>
+
+          {/* Delete active chat if it has messages */}
+          {isHydrated && activeSession && activeSession.messages.length > 0 && (
+            <button
+              onClick={() => deleteSession(activeSession.id)}
+              className="p-1.5 rounded-lg text-[#657066] hover:text-[#EF4444] hover:bg-[#121812] transition cursor-pointer"
+              title="Delete chat"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {/* Toggle Run Inspector */}
+          <button
+            onClick={() => setInspectorOpen((prev) => !prev)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-mono transition cursor-pointer ${
+              inspectorOpen
+                ? "bg-[#171E18] border-[#B8F23D]/40 text-[#D5FF78]"
+                : "bg-[#121812] border-[#202A22] text-[#9BA79D] hover:text-[#F1F5ED] hover:border-[#B8F23D]/20"
+            }`}
+            title={inspectorOpen ? "Hide Run Inspector & DAG" : "Show Run Inspector & DAG"}
+          >
+            <PanelRight className="w-3.5 h-3.5" />
+            <span className="hidden md:inline text-[11px]">Inspector</span>
+          </button>
+        </div>
+      </div>
+
       {/* Messages Scroll Area */}
-      <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8 space-y-6">
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-6 md:px-8 space-y-6">
         <div className="max-w-3xl mx-auto w-full space-y-6">
           {/* Welcome Screen when active session has no messages */}
-          {currentMessages.length === 0 ? (
+          {!isHydrated || currentMessages.length === 0 ? (
             <div className="py-8 md:py-16 text-center space-y-6">
               <div className="inline-flex p-3 rounded-2xl bg-[#0D120F] border border-[#202A22] shadow-xl relative">
                 <Sparkles className="w-8 h-8 text-[#B8F23D]" />
@@ -425,112 +608,34 @@ export function ChatInterface() {
                 }
 
                 // Assistant Response Turn
-                const events = msg.events || [];
                 return (
                   <div key={msg.id} className="flex items-start gap-3 justify-start">
-                    <div className="w-8 h-8 rounded-xl bg-[#0D120F] border border-[#202A22] flex items-center justify-center shrink-0 mt-1 shadow-md">
-                      <Bot className="w-4 h-4 text-[#B8F23D]" />
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-[#0D120F] border border-[#202A22] flex items-center justify-center shrink-0 mt-1 shadow-md">
+                      <Bot className="w-4 h-4 text-[#22C55E]" />
                     </div>
 
-                    <div className="flex-1 min-w-0 space-y-3">
-                      {/* Thought & Pipeline Checkpoint Accordion */}
-                      {(events.length > 0 || isMsgRunning) && (
-                        <div className="rounded-xl bg-[#0D120F] border border-[#202A22] overflow-hidden text-xs font-mono">
-                          <button
-                            onClick={() => toggleThought(msg.id)}
-                            className="w-full flex items-center justify-between p-3 bg-[#0A0E0C] hover:bg-[#121812] transition-colors cursor-pointer text-left"
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <Activity
-                                className={`w-3.5 h-3.5 ${
-                                  isMsgRunning ? "text-[#B8F23D] animate-spin" : "text-[#9BA79D]"
-                                }`}
-                              />
-                              <span className="font-bold text-[#F1F5ED] truncate">
-                                {isMsgRunning
-                                  ? `Executing Pipeline (${events.length} stages)`
-                                  : `Workflow Completed (${events.length} stages)`}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <span className="text-[10px] text-[#657066]">
-                                {msg.duration_seconds
-                                  ? formatDuration(msg.duration_seconds)
-                                  : ""}
-                              </span>
-                              {isThoughtOpen ? (
-                                <ChevronUp className="w-3.5 h-3.5 text-[#657066]" />
-                              ) : (
-                                <ChevronDown className="w-3.5 h-3.5 text-[#657066]" />
-                              )}
-                            </div>
-                          </button>
-
-                          <AnimatePresence>
-                            {isThoughtOpen && (
-                              <motion.div
-                                initial={{ height: 0, opacity: 0 }}
-                                animate={{ height: "auto", opacity: 1 }}
-                                exit={{ height: 0, opacity: 0 }}
-                                className="p-3 border-t border-[#202A22] space-y-2 bg-[#0D120F]"
-                              >
-                                <div className="space-y-1.5">
-                                  {events.map((evt, idx) => (
-                                    <div
-                                      key={evt.event_id || idx}
-                                      className="flex items-center justify-between text-[11px] p-1.5 rounded bg-[#070A08] border border-[#202A22]/50"
-                                    >
-                                      <div className="flex items-center gap-2 truncate">
-                                        {evt.status === "completed" ? (
-                                          <CheckCircle2 className="w-3.5 h-3.5 text-[#22C55E] shrink-0" />
-                                        ) : evt.status === "failed" ? (
-                                          <AlertCircle className="w-3.5 h-3.5 text-[#EF4444] shrink-0" />
-                                        ) : (
-                                          <Clock className="w-3.5 h-3.5 text-[#B8F23D] shrink-0 animate-pulse" />
-                                        )}
-                                        <span className="text-[#F1F5ED] font-semibold truncate">
-                                          {evt.stage.replace(/_/g, " ")}
-                                        </span>
-                                      </div>
-                                      <span
-                                        className="text-[10px] text-[#657066] shrink-0 ml-2"
-                                        suppressHydrationWarning
-                                      >
-                                        {formatTimestamp(evt.timestamp)}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-
-                                {/* View in Inspector Action */}
-                                <div className="pt-2 flex justify-end">
-                                  <button
-                                    onClick={() => setInspectorOpen(true)}
-                                    className="flex items-center gap-1.5 text-[11px] text-[#B8F23D] hover:text-[#D5FF78] hover:underline cursor-pointer"
-                                  >
-                                    <Layers className="w-3 h-3" />
-                                    <span>Inspect in DAG Panel →</span>
-                                  </button>
-                                </div>
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </div>
-                      )}
-
+                    <div className="flex-1 min-w-0 space-y-2">
                       {/* Generated Answer Content */}
                       <div className="p-4 md:p-5 rounded-2xl bg-[#0D120F] border border-[#202A22] shadow-xl">
                         {msg.content ? (
                           <MarkdownMessage content={msg.content} />
                         ) : isMsgRunning ? (
-                          <div className="flex items-center gap-2 py-4 text-xs font-mono text-[#9BA79D]">
-                            <span className="w-2 h-2 rounded-full bg-[#B8F23D] animate-ping" />
+                          <div className="flex items-center gap-2.5 py-3 text-xs font-mono text-[#9BA79D]">
+                            <span className="w-2 h-2 rounded-full bg-[#22C55E] animate-pulse" />
                             <span>Synthesizing response inside sovereign environment...</span>
                           </div>
                         ) : (
                           <div className="text-xs text-[#657066] font-mono">
-                            Pipeline execution completed. Check checkpoints above for details.
+                            Task completed. Review checkpoints in the Right Inspector sidebar.
+                          </div>
+                        )}
+
+                        {/* Generated file cards */}
+                        {msg.generated_files && msg.generated_files.length > 0 && (
+                          <div className="space-y-1 mt-2">
+                            {msg.generated_files.map((gf) => (
+                              <GeneratedFileCard key={gf.file_id} file={gf} />
+                            ))}
                           </div>
                         )}
 
@@ -582,9 +687,15 @@ export function ChatInterface() {
                               </button>
                             </div>
 
-                            {/* Model & duration tag */}
+                            {/* Actual model used + duration */}
                             <div className="flex items-center gap-2 text-[10px] text-[#657066]">
-                              <span className="text-[#D5FF78]">{msg.model || defaultModel}</span>
+                              <span className="text-[#D5FF78]">
+                                {(msg.model_details &&
+                                  typeof msg.model_details.actual === "string" &&
+                                  msg.model_details.actual) ||
+                                  msg.model ||
+                                  defaultModel}
+                              </span>
                               {msg.duration_seconds && (
                                 <>
                                   <span>·</span>
@@ -610,7 +721,7 @@ export function ChatInterface() {
       <div className="p-4 md:p-6 bg-gradient-to-t from-[#070A08] via-[#070A08]/90 to-transparent shrink-0">
         <div className="max-w-3xl mx-auto w-full space-y-2">
           {/* Main Floating Input Card */}
-          <div className="rounded-2xl bg-[#0D120F] border border-[#202A22] focus-within:border-[#B8F23D]/50 focus-within:ring-1 focus-within:ring-[#B8F23D]/20 shadow-2xl transition-all overflow-hidden p-3 space-y-2">
+          <div className="rounded-2xl bg-[#0D120F] border border-[#202A22] focus-within:border-[#B8F23D]/50 focus-within:ring-1 focus-within:ring-[#B8F23D]/20 shadow-2xl transition-all p-3 space-y-2 relative">
             {/* Attached Files Tray */}
             {attachedFiles.length > 0 && (
               <div className="flex flex-wrap gap-1.5 pb-2 border-b border-[#202A22]/60">
@@ -665,53 +776,118 @@ export function ChatInterface() {
                 </button>
 
                 {/* Model Selector Dropdown Pill */}
-                <div className="relative">
+                <div className="relative" ref={modelDropdownRef}>
                   <button
                     onClick={() => setModelDropdownOpen(!modelDropdownOpen)}
                     className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#121812] border border-[#202A22] hover:border-[#B8F23D]/40 text-xs font-mono text-[#D5FF78] transition cursor-pointer"
+                    title="Select model for this session"
                   >
                     <Cpu className="w-3 h-3 text-[#B8F23D]" />
-                    <span className="text-[11px] truncate max-w-[120px]">
-                      {selectedModel === "auto" ? `Auto (${defaultModel})` : selectedModel}
+                    <span
+                      suppressHydrationWarning
+                      className="text-[11px] truncate max-w-[140px]"
+                    >
+                      {selectedModel === "auto"
+                        ? `Auto (${defaultModel})`
+                        : selectedModel}
                     </span>
-                    <ChevronDown className="w-3 h-3 text-[#657066]" />
+                    <ChevronDown
+                      className={`w-3 h-3 text-[#657066] transition-transform ${
+                        modelDropdownOpen ? "rotate-180" : ""
+                      }`}
+                    />
                   </button>
 
                   {modelDropdownOpen && (
-                    <div className="absolute left-0 bottom-full mb-2 w-56 rounded-xl bg-[#0D120F] border border-[#202A22] shadow-2xl p-1.5 z-40 font-mono text-xs space-y-0.5">
-                      <div className="px-2 py-1 text-[10px] text-[#657066] uppercase font-bold">
-                        SELECT INFERENCE MODEL
+                    <div className="absolute left-0 bottom-full mb-3 w-80 rounded-xl bg-[#0D120F] border border-[#202A22] shadow-2xl p-2 z-50 font-mono text-xs space-y-1 backdrop-blur-xl">
+                      <div className="px-2 py-1 text-[10px] text-[#657066] uppercase font-bold tracking-wider flex items-center justify-between border-b border-[#202A22]/50 pb-1.5 mb-1">
+                        <span>SELECT INFERENCE MODEL</span>
+                        <span className="text-[9px] text-[#B8F23D]">
+                          {models.length + 1} AVAILABLE
+                        </span>
                       </div>
-                      <button
-                        onClick={() => {
-                          setSelectedModel("auto");
-                          setModelDropdownOpen(false);
-                        }}
-                        className={`w-full text-left px-2 py-1.5 rounded-lg transition ${
-                          selectedModel === "auto"
-                            ? "bg-[#171E18] text-[#D5FF78] font-bold"
-                            : "text-[#9BA79D] hover:bg-[#121812] hover:text-[#F1F5ED]"
-                        }`}
-                      >
-                        Auto (Default: {defaultModel})
-                      </button>
-                      {models.map((m) => (
+
+                      <div className="max-h-64 overflow-y-auto space-y-1 pr-1">
+                        {/* Auto (Default) */}
                         <button
-                          key={m.id}
                           onClick={() => {
-                            setSelectedModel(m.id);
+                            setSelectedModel("auto");
                             setModelDropdownOpen(false);
                           }}
-                          className={`w-full text-left px-2 py-1.5 rounded-lg transition flex items-center justify-between ${
-                            selectedModel === m.id
-                              ? "bg-[#171E18] text-[#D5FF78] font-bold"
-                              : "text-[#9BA79D] hover:bg-[#121812] hover:text-[#F1F5ED]"
+                          className={`w-full text-left p-2 rounded-lg transition flex items-center justify-between ${
+                            selectedModel === "auto"
+                              ? "bg-[#171E18] text-[#D5FF78] border border-[#B8F23D]/30 font-bold"
+                              : "text-[#9BA79D] hover:bg-[#121812] hover:text-[#F1F5ED] border border-transparent"
                           }`}
                         >
-                          <span className="truncate">{m.id}</span>
-                          <span className="text-[10px] text-[#657066] uppercase">{m.provider}</span>
+                          <div className="flex flex-col min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="truncate">Auto Router</span>
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#B8F23D]/10 text-[#B8F23D] border border-[#B8F23D]/20">
+                                Recommended
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-[#657066] font-normal mt-0.5">
+                              Dynamically routes to default ({defaultModel})
+                            </span>
+                          </div>
+                          {selectedModel === "auto" && (
+                            <Check className="w-3.5 h-3.5 text-[#B8F23D] shrink-0" />
+                          )}
                         </button>
-                      ))}
+
+                        {/* Configured Models from GET /api/models */}
+                        {models.map((m) => {
+                          const isSelected = selectedModel === m.id;
+                          const caps = Array.isArray(m.capabilities)
+                            ? m.capabilities.join(", ")
+                            : typeof m.capabilities === "string"
+                            ? m.capabilities
+                            : "";
+
+                          return (
+                            <button
+                              key={m.id}
+                              disabled={!m.available}
+                              onClick={() => {
+                                if (!m.available) return;
+                                setSelectedModel(m.id);
+                                setModelDropdownOpen(false);
+                              }}
+                              className={`w-full text-left p-2 rounded-lg transition flex items-center justify-between ${
+                                !m.available
+                                  ? "opacity-50 cursor-not-allowed text-[#657066]"
+                                  : isSelected
+                                  ? "bg-[#171E18] text-[#D5FF78] border border-[#B8F23D]/30 font-bold"
+                                  : "text-[#9BA79D] hover:bg-[#121812] hover:text-[#F1F5ED] border border-transparent"
+                              }`}
+                            >
+                              <div className="flex flex-col min-w-0 pr-2">
+                                <div className="flex items-center gap-1.5">
+                                  <span
+                                    className={`w-1.5 h-1.5 rounded-full ${
+                                      m.available ? "bg-[#22C55E]" : "bg-[#EF4444]"
+                                    }`}
+                                  />
+                                  <span className="truncate font-semibold">{m.id}</span>
+                                  {!m.available && (
+                                    <span className="text-[9px] px-1 py-0.2 rounded bg-red-950/50 text-red-400 border border-red-800/40 uppercase font-mono">
+                                      Offline
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 mt-0.5 text-[10px] text-[#657066] font-normal">
+                                  <span className="uppercase">{m.provider}</span>
+                                  {caps && <span>· {caps}</span>}
+                                </div>
+                              </div>
+                              {isSelected && (
+                                <Check className="w-3.5 h-3.5 text-[#B8F23D] shrink-0" />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>

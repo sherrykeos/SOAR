@@ -15,9 +15,13 @@ export class ApiError extends Error {
   }
 }
 
+export interface ApiClientOptions extends RequestInit {
+  timeoutMs?: number;
+}
+
 export async function apiClient<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: ApiClientOptions = {}
 ): Promise<T> {
   const normalizedEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
   const prefix = normalizedEndpoint.startsWith("/api") ? "" : "/api";
@@ -28,7 +32,7 @@ export async function apiClient<T>(
     headers.set("Content-Type", "application/json");
   }
 
-  const timeoutMs = 30000;
+  const timeoutMs = options.timeoutMs ?? 60000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -63,7 +67,13 @@ export async function apiClient<T>(
           errorMsg = typeof detail === "string" ? detail : JSON.stringify(detail);
         }
       } catch {
-        // Non-JSON response
+        // Next.js rewrites can return a plain-text proxy error.
+        try {
+          const text = await res.text();
+          if (text.trim()) errorMsg = text.trim();
+        } catch {
+          // Keep the status-based message.
+        }
       }
 
       throw new ApiError(errorMsg, res.status, errorData);

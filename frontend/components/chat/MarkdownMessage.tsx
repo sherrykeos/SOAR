@@ -112,6 +112,26 @@ function renderFormattedText(raw: string): React.ReactNode[] {
       );
     }
 
+    // Check if it's a blockquote or document notice
+    if (para.trim().startsWith(">")) {
+      const isDocumentNotice = para.includes("Document Saved") || para.includes("File Generated") || para.includes("Artifact");
+      const cleanContent = para.replace(/^>\s*/gm, "");
+      return (
+        <div
+          key={pIdx}
+          className={`p-3.5 rounded-xl border my-2 font-mono text-xs flex items-start gap-2.5 ${
+            isDocumentNotice
+              ? "bg-[#121812] border-[#B8F23D]/30 text-[#D5FF78]"
+              : "bg-[#0D120F] border-[#202A22] text-[#9BA79D]"
+          }`}
+        >
+          <div className="flex-1 leading-relaxed">
+            {renderInlineFormatting(cleanContent)}
+          </div>
+        </div>
+      );
+    }
+
     // Check if it's a header
     if (para.startsWith("### ")) {
       return (

@@ -120,9 +120,53 @@ html, body {
 }
 
 .lime-glow {
-  box-shadow: 0 0 25px -4px rgba(184, 242, 61, 0.35);
+  box-shadow: 0 0 15px -2px rgba(34, 197, 94, 0.2);
 }
 
 .lime-glow-intense {
-  box-shadow: 0 0 45px rgba(184, 242, 61, 0.45);
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.25);
 }
+
+/* Pipeline Connecting Line & Node Animations */
+@keyframes radarPulse {
+  0% {
+    transform: scale(0.96);
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.45);
+  }
+  70% {
+    transform: scale(1.04);
+    box-shadow: 0 0 0 6px rgba(34, 197, 94, 0);
+  }
+  100% {
+    transform: scale(0.96);
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+  }
+}
+
+@keyframes linePulse {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.pipeline-laser {
+  animation: linePulse 1.8s ease-in-out infinite;
+  background: linear-gradient(
+    180deg,
+    rgba(34, 197, 94, 0.4) 0%,
+    rgba(74, 222, 128, 0.9) 50%,
+    rgba(34, 197, 94, 0.4) 100%
+  );
+}
+
+.radar-node-pulse {
+  animation: radarPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.pipeline-line-glow {
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.3);
+}
+

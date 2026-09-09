@@ -30,6 +30,12 @@ export function useTaskEvents({
     onStatusChangeRef.current = onStatusChange;
   }, [isCompleted, onStatusChange]);
 
+  useEffect(() => {
+    if (initialEvents && initialEvents.length > 0) {
+      setEvents(initialEvents);
+    }
+  }, [initialEvents]);
+
   const pollFn = useCallback(async (currentRunId: string) => {
     if (!currentRunId || isCompletedRef.current || unmountedRef.current) {
       return false;
@@ -65,7 +71,8 @@ export function useTaskEvents({
       if (!unmountedRef.current) {
         setError(err instanceof Error ? err.message : "Error fetching events");
       }
-      return true;
+      // Stop polling on error (e.g. 404 Not Found or network error) to avoid spamming the backend
+      return false;
     }
   }, []);
 
@@ -73,6 +80,7 @@ export function useTaskEvents({
     unmountedRef.current = false;
 
     if (!runId || isCompleted) {
+      setIsPolling(false);
       return;
     }
 

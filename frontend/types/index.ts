@@ -7,6 +7,8 @@ export interface HealthResponse {
 export interface TaskRequest {
   task: string;
   model?: string | null;
+  run_id?: string | null;
+  attached_file_ids?: string[] | null;
 }
 
 export interface TaskModelInfo {
@@ -15,6 +17,12 @@ export interface TaskModelInfo {
   fallback_used?: boolean;
   fallback_reason?: string | null;
   duration_seconds?: number;
+}
+
+export interface GeneratedFile {
+  file_id: string;
+  filename: string;
+  mime_type?: string | null;
 }
 
 export interface TaskResponse {
@@ -26,6 +34,7 @@ export interface TaskResponse {
   citations: Array<Record<string, unknown>>;
   model_details?: Record<string, unknown> | null;
   events: Array<Record<string, unknown>>;
+  generated_files: GeneratedFile[];
 }
 
 export interface EventItem {
@@ -107,7 +116,9 @@ export interface ChatMessage {
   events?: EventItem[];
   duration_seconds?: number;
   model?: string;
+  model_details?: Record<string, unknown> | null;
   execution_mode?: string;
+  generated_files?: GeneratedFile[];
 }
 
 export interface ChatSession {

@@ -156,18 +156,24 @@ export function ModelsPage() {
 
                 <div className="pt-4 mt-4 border-t border-[#202A22] flex items-center justify-between">
                   <span className="text-[11px] font-mono text-[#657066]">
-                    {isSelected ? "Currently selected" : "Click to select"}
+                    {!m.available
+                      ? "Model currently offline"
+                      : isSelected
+                      ? "Currently selected"
+                      : "Click to select"}
                   </span>
                   <button
                     onClick={() => handleSelectModel(m.id)}
-                    disabled={isSelected}
+                    disabled={isSelected || !m.available}
                     className={`px-3 py-1.5 rounded-lg text-xs font-mono font-semibold transition ${
-                      isSelected
+                      !m.available
+                        ? "bg-[#121812] text-[#657066] border border-[#202A22] cursor-not-allowed opacity-60"
+                        : isSelected
                         ? "bg-[#B8F23D]/20 text-[#D5FF78] border border-[#B8F23D]/40 cursor-default"
                         : "bg-[#171E18] text-[#F1F5ED] hover:bg-[#B8F23D] hover:text-[#070A08] border border-[#202A22]"
                     }`}
                   >
-                    {isSelected ? "Active" : "Use Model"}
+                    {!m.available ? "Unavailable" : isSelected ? "Active" : "Use Model"}
                   </button>
                 </div>
               </div>
