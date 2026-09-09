@@ -13,3 +13,9 @@ data/chroma/*
 !data/chroma/.gitkeep
 data/documents/*
 !data/documents/.gitkeep
+
+# frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.vercel/
