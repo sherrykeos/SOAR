@@ -132,15 +132,24 @@ class InMemoryEventSink(BaseEventSink):
 
     def __init__(self):
         self._events: List[ProgressEvent] = []
+        self._runs: Dict[str, List[ProgressEvent]] = {}
         self._lock = threading.Lock()
 
     def handle_event(self, event: ProgressEvent) -> None:
         with self._lock:
             self._events.append(event)
+            if event.run_id:
+                if event.run_id not in self._runs:
+                    self._runs[event.run_id] = []
+                self._runs[event.run_id].append(event)
 
     def get_events(self) -> List[ProgressEvent]:
         with self._lock:
             return list(self._events)
+
+    def get_events_by_run_id(self, run_id: str) -> List[ProgressEvent]:
+        with self._lock:
+            return list(self._runs.get(run_id, []))
 
     def get_event_dicts(self) -> List[Dict[str, Any]]:
         with self._lock:
@@ -149,6 +158,11 @@ class InMemoryEventSink(BaseEventSink):
     def clear(self) -> None:
         with self._lock:
             self._events.clear()
+
+    def clear_all(self) -> None:
+        with self._lock:
+            self._events.clear()
+            self._runs.clear()
 
     def __len__(self) -> int:
         with self._lock:
@@ -254,8 +268,21 @@ class ProgressEventEmitter:
         sink = self.get_in_memory_sink()
         return sink.get_event_dicts() if sink else []
 
+    def get_events_for_run(self, run_id: str) -> List[Dict[str, Any]]:
+        """Retrieves collected events specifically associated with a run_id."""
+        sink = self.get_in_memory_sink()
+        if sink:
+            return [e.to_dict() for e in sink.get_events_by_run_id(run_id)]
+        return []
+
     def clear(self) -> None:
         """Clears events in the in-memory sink."""
         sink = self.get_in_memory_sink()
         if sink:
             sink.clear()
+
+    def clear_all(self) -> None:
+        """Clears all events and run history in the in-memory sink."""
+        sink = self.get_in_memory_sink()
+        if sink:
+            sink.clear_all()

@@ -156,6 +156,7 @@ class Orchestrator:
             )
 
         return {
+            "run_id": run_id,
             "status": "success",
             "response": exec_result.response,
             "execution_mode": "direct_answer",
@@ -168,7 +169,7 @@ class Orchestrator:
                 "fallback_reason": exec_result.fallback_reason,
                 "duration_seconds": exec_result.duration_seconds,
             },
-            "events": self.emitter.get_event_dicts() if self.emitter else [],
+            "events": self.emitter.get_events_for_run(run_id) if (self.emitter and run_id) else (self.emitter.get_event_dicts() if self.emitter else []),
         }
 
     def handle_coding(
@@ -226,6 +227,7 @@ class Orchestrator:
             )
 
         return {
+            "run_id": run_id,
             "status": "success",
             "response": final_response,
             "code": extracted_code,
@@ -239,23 +241,27 @@ class Orchestrator:
                 "fallback_reason": exec_result.fallback_reason,
                 "duration_seconds": exec_result.duration_seconds,
             },
-            "events": self.emitter.get_event_dicts() if self.emitter else [],
+            "events": self.emitter.get_events_for_run(run_id) if (self.emitter and run_id) else (self.emitter.get_event_dicts() if self.emitter else []),
         }
 
-    def process_task(self, task: str) -> Dict[str, Any]:
+    def process_task(
+        self,
+        task: str,
+        run_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Main entry point for unified SOAR task processing.
         Classifies task, routes to optimal local model, and dispatches to
         direct answer, coding, or agent mode with real progress event emissions.
         """
-        run_id = str(uuid.uuid4())
+        active_run_id = run_id or str(uuid.uuid4())
         if self.emitter:
-            self.emitter.clear()
             self.emitter.emit(
                 stage=EventStage.CLASSIFYING,
                 status=EventStatus.STARTED,
                 message="Classifying task",
-                run_id=run_id,
+                run_id=active_run_id,
             )
 
         profile = self.classifier.classify(task)
@@ -274,19 +280,19 @@ class Orchestrator:
                     "requires_coding": profile.requires_coding,
                     "requires_tools": profile.requires_tools,
                 },
-                run_id=run_id,
+                run_id=active_run_id,
             )
             self.emitter.emit(
                 stage=EventStage.MODEL_SELECTING,
                 status=EventStatus.STARTED,
                 message="Selecting model",
-                run_id=run_id,
+                run_id=active_run_id,
             )
 
         if profile.execution_mode == "direct_answer":
-            return self.handle_direct_answer(task, profile, run_id=run_id)
+            return self.handle_direct_answer(task, profile, run_id=active_run_id)
         elif profile.execution_mode == "code":
-            return self.handle_coding(task, profile, run_id=run_id)
+            return self.handle_coding(task, profile, run_id=active_run_id)
         else:
             # Multi-step Agent execution
             if self.emitter:
@@ -295,10 +301,11 @@ class Orchestrator:
                     status=EventStatus.COMPLETED,
                     message="Model selected — qwen3:1.7b",
                     metadata={"selected_model": "qwen3:1.7b", "routing_mode": "agent"},
-                    run_id=run_id,
+                    run_id=active_run_id,
                 )
             state = self.agent.run(task)
             return {
+                "run_id": active_run_id,
                 "status": state.status,
                 "response": "Agent workflow completed." if state.status == "completed" else "Agent encountered an error.",
                 "execution_mode": "agent",
@@ -314,7 +321,7 @@ class Orchestrator:
                     "fallback_used": False,
                     "fallback_reason": None,
                 },
-                "events": self.emitter.get_event_dicts() if self.emitter else [],
+                "events": self.emitter.get_events_for_run(active_run_id) if (self.emitter and active_run_id) else (self.emitter.get_event_dicts() if self.emitter else []),
             }
 
     def run(self, task: str) -> AgentState:

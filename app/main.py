@@ -1,45 +1,21 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+"""
+SOAR Main Application Entry Point.
+Initializes the FastAPI application from app.api.create_app().
+"""
 
-from app.orchestrator.orchestrator import Orchestrator
+from app.api import create_app
+from app.config import get_config
 
-
-app = FastAPI(
-    title="SOAR",
-    description="Sovereign On-Premise Agentic AI Workbench",
-    version="0.1.0",
-)
-
-orchestrator = Orchestrator()
+config = get_config()
+app = create_app(config=config)
 
 
-class ChatRequest(BaseModel):
-    task: str
+if __name__ == "__main__":
+    import uvicorn
 
-
-@app.get("/")
-def root():
-    return {
-        "name": "SOAR",
-        "status": "online",
-        "version": "0.1.0",
-    }
-
-
-@app.get("/health") 
-def health():
-    return {
-        "status": "healthy",
-    }
-
-
-@app.post("/chat")
-def chat(request: ChatRequest):
-    result = orchestrator.run(request.task)
-
-    return {
-        "task": result.task,
-        "status": result.status,
-        "plan": result.plan,
-        "results": result.results,
-    }
+    uvicorn.run(
+        "app.main:app",
+        host=config.api.host,
+        port=config.api.port,
+        reload=config.api.reload,
+    )
