@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   ArrowUp,
   Paperclip,
@@ -31,17 +31,16 @@ import { createTask, getTaskEvents } from "@/lib/api/tasks";
 import { uploadFile } from "@/lib/api/files";
 import { formatDuration, formatTimestamp } from "@/lib/utils/formatters";
 import { MarkdownMessage } from "./MarkdownMessage";
-import type { ClientTaskRecord, EventItem } from "@/types";
+import type { ChatMessage, EventItem } from "@/types";
 import { motion, AnimatePresence } from "framer-motion";
 
 export function ChatInterface() {
   const {
-    sessionTasks,
-    activeRunId,
-    setActiveRunId,
-    addSessionTask,
-    updateSessionTask,
-    getTaskByRunId,
+    activeSessionId,
+    createNewSession,
+    addMessageToSession,
+    updateMessageInSession,
+    getActiveSession,
     models,
     defaultModel,
     selectedModel,
@@ -53,30 +52,28 @@ export function ChatInterface() {
 
   const [prompt, setPrompt] = useState("");
   const [isExecuting, setIsExecuting] = useState(false);
+  const [executingMsgId, setExecutingMsgId] = useState<string | null>(null);
   const [attachedFiles, setAttachedFiles] = useState<{ id?: string; name: string; size?: number }[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [thoughtExpanded, setThoughtExpanded] = useState(true);
-
-  // Live events for currently executing or active task
-  const [liveEvents, setLiveEvents] = useState<EventItem[]>([]);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Resolve currently displayed task
-  const currentTask: ClientTaskRecord | undefined = activeRunId
-    ? getTaskByRunId(activeRunId)
-    : sessionTasks[0];
+  // Active session
+  const activeSession = getActiveSession();
+  const currentMessages = useMemo(
+    () => activeSession?.messages || [],
+    [activeSession?.messages]
+  );
 
-  const displayEvents = liveEvents.length > 0 ? liveEvents : (currentTask?.events || []);
-
-  // Auto-scroll to bottom of messages when events or task updates
+  // Auto-scroll to bottom of messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [currentTask?.answer, displayEvents.length, isExecuting]);
+  }, [currentMessages.length, isExecuting, executingMsgId]);
 
   // Adjust textarea height automatically
   const handlePromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -87,28 +84,29 @@ export function ChatInterface() {
     }
   };
 
-  const currentRunId = currentTask?.run_id;
-  const currentStatus = currentTask?.status;
-
-  // Poll events if task is in-progress
+  // Poll events for actively executing message
   useEffect(() => {
-    if (!currentRunId || currentStatus === "completed" || currentStatus === "failed") {
-      return;
-    }
+    if (!isExecuting || !executingMsgId || !activeSessionId) return;
+
+    const targetMsg = currentMessages.find((m) => m.id === executingMsgId);
+    const runId = targetMsg?.run_id;
+    if (!runId) return;
 
     let active = true;
 
     const poll = async () => {
       try {
-        const res = await getTaskEvents(currentRunId);
+        const res = await getTaskEvents(runId);
         if (active && res && Array.isArray(res.events)) {
-          setLiveEvents(res.events);
-          updateSessionTask(currentRunId, { events: res.events });
+          updateMessageInSession(activeSessionId, executingMsgId, {
+            events: res.events,
+          });
 
-          // Terminal events check
+          // Check if finished
           const lastEvent = res.events[res.events.length - 1];
           if (lastEvent?.status === "completed" || lastEvent?.status === "failed") {
             setIsExecuting(false);
+            setExecutingMsgId(null);
           }
         }
       } catch {
@@ -123,7 +121,7 @@ export function ChatInterface() {
       active = false;
       clearInterval(interval);
     };
-  }, [currentRunId, currentStatus, updateSessionTask]);
+  }, [isExecuting, executingMsgId, activeSessionId, currentMessages, updateMessageInSession]);
 
   // Handle file uploads
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -145,7 +143,6 @@ export function ChatInterface() {
         ]);
         success("File attached", file.name);
       } catch {
-        // Fallback local reference
         setAttachedFiles((prev) => [
           ...prev,
           {
@@ -163,24 +160,71 @@ export function ChatInterface() {
     setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // Execute task submission
+  // Submit multi-turn message in active chat session
   const handleSubmit = async () => {
     const query = prompt.trim();
     if (!query || isExecuting) return;
 
-    setIsExecuting(true);
-    setLiveEvents([]);
+    let sessionId = activeSessionId;
+    if (!sessionId || !activeSession) {
+      sessionId = createNewSession(query.slice(0, 36));
+    }
 
     const taskModel = selectedModel === "auto" ? defaultModel : selectedModel;
     const attachedFileNames = attachedFiles.map((f) => f.name);
-    let finalTaskPrompt = query;
+
+    // 1. Add User Message
+    const userMsgId = `msg_user_${Date.now()}`;
+    const userMessage: ChatMessage = {
+      id: userMsgId,
+      role: "user",
+      content: query,
+      created_at: new Date().toISOString(),
+      attached_files: attachedFileNames,
+    };
+    addMessageToSession(sessionId, userMessage);
+
+    // 2. Add placeholder Assistant Message
+    const asstMsgId = `msg_asst_${Date.now()}`;
+    const asstMessage: ChatMessage = {
+      id: asstMsgId,
+      role: "assistant",
+      content: "",
+      created_at: new Date().toISOString(),
+      status: "running",
+      model: taskModel,
+      events: [],
+    };
+    addMessageToSession(sessionId, asstMessage);
+
+    setPrompt("");
+    setAttachedFiles([]);
+    setIsExecuting(true);
+    setExecutingMsgId(asstMsgId);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
+
+    // 3. Format Multi-Turn Prompt Context
+    let finalPrompt = "";
+    const history = currentMessages.slice(-6); // last few turns for context
+    if (history.length > 0) {
+      finalPrompt += "=== CONVERSATION CONTEXT ===\n";
+      history.forEach((m) => {
+        finalPrompt += `${m.role === "user" ? "User" : "Assistant"}: ${m.content}\n`;
+      });
+      finalPrompt += `=== END CONTEXT ===\n\nUser: ${query}`;
+    } else {
+      finalPrompt = query;
+    }
+
     if (attachedFileNames.length > 0) {
-      finalTaskPrompt += `\n\n[Referenced Workspace Files: ${attachedFileNames.join(", ")}]`;
+      finalPrompt += `\n\n[Referenced Workspace Files: ${attachedFileNames.join(", ")}]`;
     }
 
     try {
       const res = await createTask({
-        task: finalTaskPrompt,
+        task: finalPrompt,
         model: taskModel === "auto" ? null : taskModel,
       });
 
@@ -196,32 +240,34 @@ export function ChatInterface() {
         })
       );
 
-      const newTaskRecord: ClientTaskRecord = {
+      updateMessageInSession(sessionId, asstMsgId, {
         run_id: res.run_id,
-        task: query,
+        content: res.answer || "",
         status: res.status === "failed" ? "failed" : "completed",
         model: res.model || taskModel,
-        attached_files: attachedFileNames,
-        answer: res.answer || "",
-        created_at: new Date().toISOString(),
         execution_mode: res.execution_mode || "sandbox",
         events: initialEvents,
-      };
-
-      addSessionTask(newTaskRecord);
-      setActiveRunId(res.run_id);
-      setPrompt("");
-      setAttachedFiles([]);
-      if (textareaRef.current) {
-        textareaRef.current.style.height = "auto";
-      }
+        duration_seconds:
+          typeof res.model_details === "object" &&
+          res.model_details !== null &&
+          "duration_seconds" in res.model_details &&
+          typeof res.model_details.duration_seconds === "number"
+            ? res.model_details.duration_seconds
+            : undefined,
+      });
 
       if (res.answer) {
         setIsExecuting(false);
+        setExecutingMsgId(null);
       }
     } catch (err) {
+      updateMessageInSession(sessionId, asstMsgId, {
+        content: `Error executing request: ${err instanceof Error ? err.message : "Backend unavailable"}`,
+        status: "failed",
+      });
       error("Execution Failed", err instanceof Error ? err.message : "Backend unavailable");
       setIsExecuting(false);
+      setExecutingMsgId(null);
     }
   };
 
@@ -232,10 +278,10 @@ export function ChatInterface() {
     }
   };
 
-  const copyAnswer = (text: string) => {
+  const copyMessage = (msgId: string, text: string) => {
     navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setCopiedId(msgId);
+    setTimeout(() => setCopiedId(null), 2000);
   };
 
   const handleRetryPrompt = (prevPrompt: string) => {
@@ -243,6 +289,13 @@ export function ChatInterface() {
     if (textareaRef.current) {
       textareaRef.current.focus();
     }
+  };
+
+  const toggleThought = (msgId: string) => {
+    setExpandedThoughts((prev) => ({
+      ...prev,
+      [msgId]: prev[msgId] === undefined ? false : !prev[msgId],
+    }));
   };
 
   // 4 Default Starter Prompts
@@ -278,8 +331,8 @@ export function ChatInterface() {
       {/* Messages Scroll Area */}
       <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8 space-y-6">
         <div className="max-w-3xl mx-auto w-full space-y-6">
-          {/* Welcome Screen when no active conversation exists */}
-          {!currentTask ? (
+          {/* Welcome Screen when active session has no messages */}
+          {currentMessages.length === 0 ? (
             <div className="py-8 md:py-16 text-center space-y-6">
               <div className="inline-flex p-3 rounded-2xl bg-[#0D120F] border border-[#202A22] shadow-xl relative">
                 <Sparkles className="w-8 h-8 text-[#B8F23D]" />
@@ -291,7 +344,7 @@ export function ChatInterface() {
                   Sovereign Intelligence Engine
                 </h1>
                 <p className="text-sm text-[#9BA79D] max-w-md mx-auto leading-relaxed">
-                  On-premise execution with zero external network traffic. Ask SOAR to research, analyze, create, build, or plan.
+                  On-premise execution with zero external network traffic. Start a multi-turn conversation or choose a workflow below.
                 </p>
               </div>
 
@@ -325,202 +378,227 @@ export function ChatInterface() {
               </div>
             </div>
           ) : (
-            /* Active Conversation Thread */
+            /* Multi-turn Conversation Stream */
             <div className="space-y-6">
-              {/* 1. User Message Card */}
-              <div className="flex items-start gap-3 justify-end">
-                <div className="max-w-2xl bg-[#0D120F] border border-[#202A22] rounded-2xl p-4 shadow-md space-y-2 text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    <span className="font-mono text-[10px] uppercase font-bold text-[#657066]">
-                      YOU
-                    </span>
-                    <div className="w-6 h-6 rounded-full bg-[#121812] border border-[#202A22] flex items-center justify-center text-[#9BA79D]">
-                      <User className="w-3.5 h-3.5" />
-                    </div>
-                  </div>
+              {currentMessages.map((msg) => {
+                const isUser = msg.role === "user";
+                const isMsgRunning = isExecuting && executingMsgId === msg.id;
+                const isThoughtOpen =
+                  expandedThoughts[msg.id] !== undefined
+                    ? expandedThoughts[msg.id]
+                    : true;
 
-                  {/* Attached Files Pills */}
-                  {currentTask.attached_files && currentTask.attached_files.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 justify-end pt-1">
-                      {currentTask.attached_files.map((file) => (
-                        <div
-                          key={file}
-                          className="flex items-center gap-1.5 px-2 py-1 rounded bg-[#121812] border border-[#202A22] text-[11px] text-[#9BA79D]"
-                        >
-                          <FileText className="w-3 h-3 text-[#B8F23D]" />
-                          <span className="truncate max-w-[160px]">{file}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <p className="text-sm text-[#F1F5ED] whitespace-pre-wrap leading-relaxed font-sans text-left">
-                    {currentTask.task}
-                  </p>
-                </div>
-              </div>
-
-              {/* 2. Assistant Response Card */}
-              <div className="flex items-start gap-3 justify-start">
-                <div className="w-8 h-8 rounded-xl bg-[#0D120F] border border-[#202A22] flex items-center justify-center shrink-0 mt-1 shadow-md">
-                  <Bot className="w-4 h-4 text-[#B8F23D]" />
-                </div>
-
-                <div className="flex-1 min-w-0 space-y-3">
-                  {/* Thought & Pipeline Checkpoint Accordion (Claude/ChatGPT style) */}
-                  {(displayEvents.length > 0 || isExecuting) && (
-                    <div className="rounded-xl bg-[#0D120F] border border-[#202A22] overflow-hidden text-xs font-mono">
-                      <button
-                        onClick={() => setThoughtExpanded(!thoughtExpanded)}
-                        className="w-full flex items-center justify-between p-3 bg-[#0A0E0C] hover:bg-[#121812] transition-colors cursor-pointer text-left"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Activity
-                            className={`w-3.5 h-3.5 ${
-                              isExecuting ? "text-[#B8F23D] animate-spin" : "text-[#9BA79D]"
-                            }`}
-                          />
-                          <span className="font-bold text-[#F1F5ED] truncate">
-                            {isExecuting
-                              ? `Executing Pipeline (${displayEvents.length} stages)`
-                              : `Workflow Completed (${displayEvents.length} stages)`}
+                if (isUser) {
+                  return (
+                    <div key={msg.id} className="flex items-start gap-3 justify-end">
+                      <div className="max-w-2xl bg-[#0D120F] border border-[#202A22] rounded-2xl p-4 shadow-md space-y-2 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <span className="font-mono text-[10px] uppercase font-bold text-[#657066]">
+                            YOU
                           </span>
+                          <div className="w-6 h-6 rounded-full bg-[#121812] border border-[#202A22] flex items-center justify-center text-[#9BA79D]">
+                            <User className="w-3.5 h-3.5" />
+                          </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-[#657066]">
-                            {currentTask.duration_seconds
-                              ? formatDuration(currentTask.duration_seconds)
-                              : ""}
-                          </span>
-                          {thoughtExpanded ? (
-                            <ChevronUp className="w-3.5 h-3.5 text-[#657066]" />
-                          ) : (
-                            <ChevronDown className="w-3.5 h-3.5 text-[#657066]" />
-                          )}
-                        </div>
-                      </button>
+                        {/* Attached Files Pills */}
+                        {msg.attached_files && msg.attached_files.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 justify-end pt-1">
+                            {msg.attached_files.map((file) => (
+                              <div
+                                key={file}
+                                className="flex items-center gap-1.5 px-2 py-1 rounded bg-[#121812] border border-[#202A22] text-[11px] text-[#9BA79D]"
+                              >
+                                <FileText className="w-3 h-3 text-[#B8F23D]" />
+                                <span className="truncate max-w-[160px]">{file}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
 
-                      <AnimatePresence>
-                        {thoughtExpanded && (
-                          <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: "auto", opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            className="p-3 border-t border-[#202A22] space-y-2 bg-[#0D120F]"
+                        <p className="text-sm text-[#F1F5ED] whitespace-pre-wrap leading-relaxed font-sans text-left">
+                          {msg.content}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // Assistant Response Turn
+                const events = msg.events || [];
+                return (
+                  <div key={msg.id} className="flex items-start gap-3 justify-start">
+                    <div className="w-8 h-8 rounded-xl bg-[#0D120F] border border-[#202A22] flex items-center justify-center shrink-0 mt-1 shadow-md">
+                      <Bot className="w-4 h-4 text-[#B8F23D]" />
+                    </div>
+
+                    <div className="flex-1 min-w-0 space-y-3">
+                      {/* Thought & Pipeline Checkpoint Accordion */}
+                      {(events.length > 0 || isMsgRunning) && (
+                        <div className="rounded-xl bg-[#0D120F] border border-[#202A22] overflow-hidden text-xs font-mono">
+                          <button
+                            onClick={() => toggleThought(msg.id)}
+                            className="w-full flex items-center justify-between p-3 bg-[#0A0E0C] hover:bg-[#121812] transition-colors cursor-pointer text-left"
                           >
-                            <div className="space-y-1.5">
-                              {displayEvents.map((evt, idx) => (
-                                <div
-                                  key={evt.event_id || idx}
-                                  className="flex items-center justify-between text-[11px] p-1.5 rounded bg-[#070A08] border border-[#202A22]/50"
-                                >
-                                  <div className="flex items-center gap-2 truncate">
-                                    {evt.status === "completed" ? (
-                                      <CheckCircle2 className="w-3.5 h-3.5 text-[#22C55E] shrink-0" />
-                                    ) : evt.status === "failed" ? (
-                                      <AlertCircle className="w-3.5 h-3.5 text-[#EF4444] shrink-0" />
-                                    ) : (
-                                      <Clock className="w-3.5 h-3.5 text-[#B8F23D] shrink-0 animate-pulse" />
-                                    )}
-                                    <span className="text-[#F1F5ED] font-semibold truncate">
-                                      {evt.stage.replace(/_/g, " ")}
-                                    </span>
-                                  </div>
-                                  <span className="text-[10px] text-[#657066] shrink-0 ml-2" suppressHydrationWarning>
-                                    {formatTimestamp(evt.timestamp)}
-                                  </span>
-                                </div>
-                              ))}
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Activity
+                                className={`w-3.5 h-3.5 ${
+                                  isMsgRunning ? "text-[#B8F23D] animate-spin" : "text-[#9BA79D]"
+                                }`}
+                              />
+                              <span className="font-bold text-[#F1F5ED] truncate">
+                                {isMsgRunning
+                                  ? `Executing Pipeline (${events.length} stages)`
+                                  : `Workflow Completed (${events.length} stages)`}
+                              </span>
                             </div>
 
-                            {/* View in Inspector Action */}
-                            <div className="pt-2 flex justify-end">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] text-[#657066]">
+                                {msg.duration_seconds
+                                  ? formatDuration(msg.duration_seconds)
+                                  : ""}
+                              </span>
+                              {isThoughtOpen ? (
+                                <ChevronUp className="w-3.5 h-3.5 text-[#657066]" />
+                              ) : (
+                                <ChevronDown className="w-3.5 h-3.5 text-[#657066]" />
+                              )}
+                            </div>
+                          </button>
+
+                          <AnimatePresence>
+                            {isThoughtOpen && (
+                              <motion.div
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: "auto", opacity: 1 }}
+                                exit={{ height: 0, opacity: 0 }}
+                                className="p-3 border-t border-[#202A22] space-y-2 bg-[#0D120F]"
+                              >
+                                <div className="space-y-1.5">
+                                  {events.map((evt, idx) => (
+                                    <div
+                                      key={evt.event_id || idx}
+                                      className="flex items-center justify-between text-[11px] p-1.5 rounded bg-[#070A08] border border-[#202A22]/50"
+                                    >
+                                      <div className="flex items-center gap-2 truncate">
+                                        {evt.status === "completed" ? (
+                                          <CheckCircle2 className="w-3.5 h-3.5 text-[#22C55E] shrink-0" />
+                                        ) : evt.status === "failed" ? (
+                                          <AlertCircle className="w-3.5 h-3.5 text-[#EF4444] shrink-0" />
+                                        ) : (
+                                          <Clock className="w-3.5 h-3.5 text-[#B8F23D] shrink-0 animate-pulse" />
+                                        )}
+                                        <span className="text-[#F1F5ED] font-semibold truncate">
+                                          {evt.stage.replace(/_/g, " ")}
+                                        </span>
+                                      </div>
+                                      <span
+                                        className="text-[10px] text-[#657066] shrink-0 ml-2"
+                                        suppressHydrationWarning
+                                      >
+                                        {formatTimestamp(evt.timestamp)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+
+                                {/* View in Inspector Action */}
+                                <div className="pt-2 flex justify-end">
+                                  <button
+                                    onClick={() => setInspectorOpen(true)}
+                                    className="flex items-center gap-1.5 text-[11px] text-[#B8F23D] hover:text-[#D5FF78] hover:underline cursor-pointer"
+                                  >
+                                    <Layers className="w-3 h-3" />
+                                    <span>Inspect in DAG Panel →</span>
+                                  </button>
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      )}
+
+                      {/* Generated Answer Content */}
+                      <div className="p-4 md:p-5 rounded-2xl bg-[#0D120F] border border-[#202A22] shadow-xl">
+                        {msg.content ? (
+                          <MarkdownMessage content={msg.content} />
+                        ) : isMsgRunning ? (
+                          <div className="flex items-center gap-2 py-4 text-xs font-mono text-[#9BA79D]">
+                            <span className="w-2 h-2 rounded-full bg-[#B8F23D] animate-ping" />
+                            <span>Synthesizing response inside sovereign environment...</span>
+                          </div>
+                        ) : (
+                          <div className="text-xs text-[#657066] font-mono">
+                            Pipeline execution completed. Check checkpoints above for details.
+                          </div>
+                        )}
+
+                        {/* Action Bar Beneath Response */}
+                        {msg.content && (
+                          <div className="flex flex-wrap items-center justify-between gap-3 pt-4 mt-4 border-t border-[#202A22] text-xs font-mono">
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => copyMessage(msg.id, msg.content)}
+                                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#121812] border border-[#202A22] hover:border-[#B8F23D]/40 text-[#9BA79D] hover:text-[#F1F5ED] transition cursor-pointer text-[11px]"
+                                title="Copy answer"
+                              >
+                                {copiedId === msg.id ? (
+                                  <>
+                                    <Check className="w-3 h-3 text-[#22C55E]" />
+                                    <span className="text-[#22C55E]">Copied</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3 h-3" />
+                                    <span>Copy</span>
+                                  </>
+                                )}
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  // Find prior user prompt
+                                  const userMsg = currentMessages
+                                    .slice(0, currentMessages.indexOf(msg))
+                                    .reverse()
+                                    .find((m) => m.role === "user");
+                                  if (userMsg) handleRetryPrompt(userMsg.content);
+                                }}
+                                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#121812] border border-[#202A22] hover:border-[#B8F23D]/40 text-[#9BA79D] hover:text-[#F1F5ED] transition cursor-pointer text-[11px]"
+                                title="Fork / Retry prompt"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                <span>Retry</span>
+                              </button>
+
                               <button
                                 onClick={() => setInspectorOpen(true)}
-                                className="flex items-center gap-1.5 text-[11px] text-[#B8F23D] hover:text-[#D5FF78] hover:underline cursor-pointer"
+                                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#121812] border border-[#202A22] hover:border-[#B8F23D]/40 text-[#9BA79D] hover:text-[#F1F5ED] transition cursor-pointer text-[11px]"
+                                title="Toggle Inspector"
                               >
-                                <Layers className="w-3 h-3" />
-                                <span>Inspect in DAG Panel →</span>
+                                <Activity className="w-3 h-3 text-[#B8F23D]" />
+                                <span>DAG View</span>
                               </button>
                             </div>
-                          </motion.div>
+
+                            {/* Model & duration tag */}
+                            <div className="flex items-center gap-2 text-[10px] text-[#657066]">
+                              <span className="text-[#D5FF78]">{msg.model || defaultModel}</span>
+                              {msg.duration_seconds && (
+                                <>
+                                  <span>·</span>
+                                  <span>{formatDuration(msg.duration_seconds)}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
                         )}
-                      </AnimatePresence>
+                      </div>
                     </div>
-                  )}
-
-                  {/* Generated Answer Content */}
-                  <div className="p-4 md:p-5 rounded-2xl bg-[#0D120F] border border-[#202A22] shadow-xl">
-                    {currentTask.answer ? (
-                      <MarkdownMessage content={currentTask.answer} />
-                    ) : isExecuting ? (
-                      <div className="flex items-center gap-2 py-4 text-xs font-mono text-[#9BA79D]">
-                        <span className="w-2 h-2 rounded-full bg-[#B8F23D] animate-ping" />
-                        <span>Synthesizing response inside sovereign environment...</span>
-                      </div>
-                    ) : (
-                      <div className="text-xs text-[#657066] font-mono">
-                        Pipeline execution completed. Check checkpoints above for stage summaries.
-                      </div>
-                    )}
-
-                    {/* Action Bar Beneath Response */}
-                    {currentTask.answer && (
-                      <div className="flex flex-wrap items-center justify-between gap-3 pt-4 mt-4 border-t border-[#202A22] text-xs font-mono">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => copyAnswer(currentTask.answer || "")}
-                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#121812] border border-[#202A22] hover:border-[#B8F23D]/40 text-[#9BA79D] hover:text-[#F1F5ED] transition cursor-pointer text-[11px]"
-                            title="Copy answer"
-                          >
-                            {copied ? (
-                              <>
-                                <Check className="w-3 h-3 text-[#22C55E]" />
-                                <span className="text-[#22C55E]">Copied</span>
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="w-3 h-3" />
-                                <span>Copy</span>
-                              </>
-                            )}
-                          </button>
-
-                          <button
-                            onClick={() => handleRetryPrompt(currentTask.task)}
-                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#121812] border border-[#202A22] hover:border-[#B8F23D]/40 text-[#9BA79D] hover:text-[#F1F5ED] transition cursor-pointer text-[11px]"
-                            title="Fork / Retry prompt"
-                          >
-                            <RotateCcw className="w-3 h-3" />
-                            <span>Retry</span>
-                          </button>
-
-                          <button
-                            onClick={() => setInspectorOpen(true)}
-                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#121812] border border-[#202A22] hover:border-[#B8F23D]/40 text-[#9BA79D] hover:text-[#F1F5ED] transition cursor-pointer text-[11px]"
-                            title="Toggle Inspector"
-                          >
-                            <Activity className="w-3 h-3 text-[#B8F23D]" />
-                            <span>DAG View</span>
-                          </button>
-                        </div>
-
-                        {/* Model & duration tag */}
-                        <div className="flex items-center gap-2 text-[10px] text-[#657066]">
-                          <span className="text-[#D5FF78]">{currentTask.model}</span>
-                          {currentTask.duration_seconds && (
-                            <>
-                              <span>·</span>
-                              <span>{formatDuration(currentTask.duration_seconds)}</span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    )}
                   </div>
-                </div>
-              </div>
+                );
+              })}
             </div>
           )}
 
@@ -560,7 +638,7 @@ export function ChatInterface() {
               value={prompt}
               onChange={handlePromptChange}
               onKeyDown={handleKeyDown}
-              placeholder="Ask SOAR to research, analyze, create, build, or plan... (Enter to send, Shift+Enter for newline)"
+              placeholder="Message SOAR... (Enter to send, Shift+Enter for newline)"
               rows={1}
               className="w-full bg-transparent border-0 resize-none text-sm text-[#F1F5ED] placeholder-[#657066] focus:outline-none leading-relaxed max-h-48 min-h-[44px]"
             />

@@ -95,3 +95,27 @@ export interface ClientTaskRecord {
   attached_files?: string[];
   execution_mode?: string;
 }
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+  attached_files?: string[];
+  run_id?: string;
+  status?: "submitted" | "running" | "completed" | "failed";
+  events?: EventItem[];
+  duration_seconds?: number;
+  model?: string;
+  execution_mode?: string;
+}
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  model: string;
+  messages: ChatMessage[];
+}
+

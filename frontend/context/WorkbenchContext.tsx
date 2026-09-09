@@ -9,7 +9,13 @@ import React, {
   useMemo,
   useSyncExternalStore,
 } from "react";
-import type { ModelItem, HealthResponse, ClientTaskRecord } from "@/types";
+import type {
+  ModelItem,
+  HealthResponse,
+  ClientTaskRecord,
+  ChatSession,
+  ChatMessage,
+} from "@/types";
 import { getHealth } from "@/lib/api/health";
 import { listModels } from "@/lib/api/models";
 
@@ -27,7 +33,22 @@ interface WorkbenchContextType {
   isLoadingModels: boolean;
   refreshModels: () => Promise<void>;
 
-  // Session Tasks
+  // Chat Sessions (Multi-chat system)
+  sessions: ChatSession[];
+  activeSessionId: string | null;
+  setActiveSessionId: (id: string | null) => void;
+  createNewSession: (title?: string, model?: string) => string;
+  deleteSession: (sessionId: string) => void;
+  renameSession: (sessionId: string, newTitle: string) => void;
+  addMessageToSession: (sessionId: string, message: ChatMessage) => void;
+  updateMessageInSession: (
+    sessionId: string,
+    messageId: string,
+    updates: Partial<ChatMessage>
+  ) => void;
+  getActiveSession: () => ChatSession | undefined;
+
+  // Session Tasks (Legacy & cross-compatibility)
   sessionTasks: ClientTaskRecord[];
   activeRunId: string | null;
   setActiveRunId: (runId: string | null) => void;
@@ -52,16 +73,26 @@ interface WorkbenchContextType {
 
 const WorkbenchContext = createContext<WorkbenchContextType | undefined>(undefined);
 
+const LOCAL_STORAGE_SESSIONS_KEY = "soar_chat_sessions_v2";
 const LOCAL_STORAGE_TASKS_KEY = "soar_session_tasks_v1";
 
-function subscribeTasks(callback: () => void) {
+function subscribeStore(callback: () => void) {
   if (typeof window === "undefined") return () => {};
   window.addEventListener("storage", callback);
-  window.addEventListener("soar-tasks-change", callback);
+  window.addEventListener("soar-store-change", callback);
   return () => {
     window.removeEventListener("storage", callback);
-    window.removeEventListener("soar-tasks-change", callback);
+    window.removeEventListener("soar-store-change", callback);
   };
+}
+
+function getSessionsSnapshot(): string {
+  if (typeof window === "undefined") return "[]";
+  try {
+    return localStorage.getItem(LOCAL_STORAGE_SESSIONS_KEY) || "[]";
+  } catch {
+    return "[]";
+  }
 }
 
 function getTasksSnapshot(): string {
@@ -73,7 +104,7 @@ function getTasksSnapshot(): string {
   }
 }
 
-function getServerTasksSnapshot(): string {
+function getServerSnapshot(): string {
   return "[]";
 }
 
@@ -86,13 +117,30 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
   const [selectedModel, setSelectedModel] = useState<string>("auto");
   const [isLoadingModels, setIsLoadingModels] = useState<boolean>(true);
 
-  const rawTasksJson = useSyncExternalStore(
-    subscribeTasks,
-    getTasksSnapshot,
-    getServerTasksSnapshot
+  // Chat Sessions store
+  const rawSessionsJson = useSyncExternalStore(
+    subscribeStore,
+    getSessionsSnapshot,
+    getServerSnapshot
   );
 
-  const sessionTasks = useMemo<ClientTaskRecord[]>(() => {
+  const sessions = useMemo<ChatSession[]>(() => {
+    try {
+      const parsed = JSON.parse(rawSessionsJson);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }, [rawSessionsJson]);
+
+  // Tasks store (for legacy task views)
+  const rawTasksJson = useSyncExternalStore(
+    subscribeStore,
+    getTasksSnapshot,
+    getServerSnapshot
+  );
+
+  const directTasks = useMemo<ClientTaskRecord[]>(() => {
     try {
       const parsed = JSON.parse(rawTasksJson);
       return Array.isArray(parsed) ? parsed : [];
@@ -101,17 +149,28 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
     }
   }, [rawTasksJson]);
 
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState<boolean>(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState<boolean>(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [inspectorOpen, setInspectorOpen] = useState<boolean>(true);
 
-  // Save session tasks to localStorage & notify store subscribers
+  // Persist sessions
+  const persistSessions = useCallback((updated: ChatSession[]) => {
+    try {
+      localStorage.setItem(LOCAL_STORAGE_SESSIONS_KEY, JSON.stringify(updated.slice(0, 100)));
+      window.dispatchEvent(new Event("soar-store-change"));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Persist tasks
   const persistTasks = useCallback((tasks: ClientTaskRecord[]) => {
     try {
       localStorage.setItem(LOCAL_STORAGE_TASKS_KEY, JSON.stringify(tasks.slice(0, 50)));
-      window.dispatchEvent(new Event("soar-tasks-change"));
+      window.dispatchEvent(new Event("soar-store-change"));
     } catch {
       // ignore
     }
@@ -188,30 +247,214 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // --- Session Management Functions ---
+
+  const createNewSession = useCallback(
+    (title?: string, modelChoice?: string): string => {
+      const newId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const newSession: ChatSession = {
+        id: newId,
+        title: title || "New Chat",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        model: modelChoice || selectedModel || defaultModel,
+        messages: [],
+      };
+
+      const updated = [newSession, ...sessions];
+      persistSessions(updated);
+      setActiveSessionId(newId);
+      setActiveRunId(null);
+      return newId;
+    },
+    [sessions, selectedModel, defaultModel, persistSessions]
+  );
+
+  const deleteSession = useCallback(
+    (sessionId: string) => {
+      const updated = sessions.filter((s) => s.id !== sessionId);
+      persistSessions(updated);
+
+      if (activeSessionId === sessionId) {
+        if (updated.length > 0) {
+          setActiveSessionId(updated[0].id);
+        } else {
+          setActiveSessionId(null);
+        }
+      }
+    },
+    [sessions, activeSessionId, persistSessions]
+  );
+
+  const renameSession = useCallback(
+    (sessionId: string, newTitle: string) => {
+      const updated = sessions.map((s) =>
+        s.id === sessionId
+          ? { ...s, title: newTitle.trim() || s.title, updated_at: new Date().toISOString() }
+          : s
+      );
+      persistSessions(updated);
+    },
+    [sessions, persistSessions]
+  );
+
+  const addMessageToSession = useCallback(
+    (sessionId: string, message: ChatMessage) => {
+      const targetSession = sessions.find((s) => s.id === sessionId);
+      if (!targetSession) {
+        // Create session if it doesn't exist yet
+        const newSession: ChatSession = {
+          id: sessionId,
+          title: message.role === "user" ? message.content.slice(0, 36) : "New Chat",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          model: message.model || selectedModel || defaultModel,
+          messages: [message],
+        };
+        persistSessions([newSession, ...sessions]);
+        setActiveSessionId(sessionId);
+        if (message.run_id) setActiveRunId(message.run_id);
+        return;
+      }
+
+      let sessionTitle = targetSession.title;
+      if (
+        (sessionTitle === "New Chat" || sessionTitle === "Untitled Session") &&
+        message.role === "user"
+      ) {
+        sessionTitle = message.content.slice(0, 36) + (message.content.length > 36 ? "..." : "");
+      }
+
+      const updated = sessions.map((s) => {
+        if (s.id === sessionId) {
+          return {
+            ...s,
+            title: sessionTitle,
+            updated_at: new Date().toISOString(),
+            messages: [...s.messages, message],
+          };
+        }
+        return s;
+      });
+
+      persistSessions(updated);
+      if (message.run_id) setActiveRunId(message.run_id);
+    },
+    [sessions, selectedModel, defaultModel, persistSessions]
+  );
+
+  const updateMessageInSession = useCallback(
+    (sessionId: string, messageId: string, updates: Partial<ChatMessage>) => {
+      const updated = sessions.map((s) => {
+        if (s.id === sessionId) {
+          return {
+            ...s,
+            updated_at: new Date().toISOString(),
+            messages: s.messages.map((m) =>
+              m.id === messageId ? { ...m, ...updates } : m
+            ),
+          };
+        }
+        return s;
+      });
+
+      persistSessions(updated);
+    },
+    [sessions, persistSessions]
+  );
+
+  const getActiveSession = useCallback((): ChatSession | undefined => {
+    if (activeSessionId) {
+      return sessions.find((s) => s.id === activeSessionId);
+    }
+    return sessions[0];
+  }, [sessions, activeSessionId]);
+
+  // Derived unified task list
+  const sessionTasks = useMemo<ClientTaskRecord[]>(() => {
+    const fromMessages: ClientTaskRecord[] = [];
+    sessions.forEach((s) => {
+      s.messages.forEach((m) => {
+        if (m.run_id) {
+          fromMessages.push({
+            run_id: m.run_id,
+            task: m.content || s.title,
+            model: m.model || s.model || defaultModel,
+            status: m.status || "completed",
+            created_at: m.created_at || s.created_at,
+            duration_seconds: m.duration_seconds,
+            answer: m.role === "assistant" ? m.content : undefined,
+            events: m.events || [],
+            attached_files: m.attached_files,
+            execution_mode: m.execution_mode || "sandbox",
+          });
+        }
+      });
+    });
+
+    const combined = [...directTasks];
+    fromMessages.forEach((fm) => {
+      if (!combined.some((t) => t.run_id === fm.run_id)) {
+        combined.push(fm);
+      }
+    });
+
+    return combined;
+  }, [sessions, directTasks, defaultModel]);
+
   const addSessionTask = useCallback(
     (task: ClientTaskRecord) => {
-      const updated = [task, ...sessionTasks.filter((t) => t.run_id !== task.run_id)];
+      const updated = [task, ...directTasks.filter((t) => t.run_id !== task.run_id)];
       persistTasks(updated);
       setActiveRunId(task.run_id);
     },
-    [sessionTasks, persistTasks]
+    [directTasks, persistTasks]
   );
 
   const updateSessionTask = useCallback(
     (runId: string, updates: Partial<ClientTaskRecord>) => {
-      const updated = sessionTasks.map((t) =>
+      const updated = directTasks.map((t) =>
         t.run_id === runId ? { ...t, ...updates } : t
       );
       persistTasks(updated);
+
+      // Also update matching message in sessions if present
+      sessions.forEach((s) => {
+        const msg = s.messages.find((m) => m.run_id === runId);
+        if (msg) {
+          updateMessageInSession(s.id, msg.id, updates);
+        }
+      });
     },
-    [sessionTasks, persistTasks]
+    [directTasks, persistTasks, sessions, updateMessageInSession]
   );
 
   const getTaskByRunId = useCallback(
     (runId: string) => {
-      return sessionTasks.find((t) => t.run_id === runId);
+      const fromDirect = directTasks.find((t) => t.run_id === runId);
+      if (fromDirect) return fromDirect;
+
+      for (const s of sessions) {
+        for (const m of s.messages) {
+          if (m.run_id === runId) {
+            return {
+              run_id: m.run_id,
+              task: m.content,
+              model: m.model || s.model,
+              status: m.status || "completed",
+              created_at: m.created_at,
+              duration_seconds: m.duration_seconds,
+              answer: m.content,
+              events: m.events || [],
+              attached_files: m.attached_files,
+              execution_mode: m.execution_mode,
+            };
+          }
+        }
+      }
+      return undefined;
     },
-    [sessionTasks]
+    [directTasks, sessions]
   );
 
   return (
@@ -226,6 +469,15 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
         setSelectedModel,
         isLoadingModels,
         refreshModels,
+        sessions,
+        activeSessionId,
+        setActiveSessionId,
+        createNewSession,
+        deleteSession,
+        renameSession,
+        addMessageToSession,
+        updateMessageInSession,
+        getActiveSession,
         sessionTasks,
         activeRunId,
         setActiveRunId,
