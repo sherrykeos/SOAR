@@ -42,6 +42,12 @@ interface WorkbenchContextType {
   // Mobile navigation
   mobileSidebarOpen: boolean;
   setMobileSidebarOpen: (open: boolean) => void;
+
+  // Collapsible panels
+  sidebarCollapsed: boolean;
+  setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
+  inspectorOpen: boolean;
+  setInspectorOpen: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 const WorkbenchContext = createContext<WorkbenchContextType | undefined>(undefined);
@@ -98,6 +104,8 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState<boolean>(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState<boolean>(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
+  const [inspectorOpen, setInspectorOpen] = useState<boolean>(true);
 
   // Save session tasks to localStorage & notify store subscribers
   const persistTasks = useCallback((tasks: ClientTaskRecord[]) => {
@@ -228,6 +236,10 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
         setCommandPaletteOpen,
         mobileSidebarOpen,
         setMobileSidebarOpen,
+        sidebarCollapsed,
+        setSidebarCollapsed,
+        inspectorOpen,
+        setInspectorOpen,
       }}
     >
       {children}

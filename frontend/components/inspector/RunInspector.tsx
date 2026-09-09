@@ -11,6 +11,7 @@ import {
   RotateCw,
   Layers,
   Clock,
+  PanelRightClose,
 } from "lucide-react";
 import { formatDuration, formatTimestamp } from "@/lib/utils/formatters";
 import type { EventItem } from "@/types";
@@ -25,6 +26,7 @@ export interface RunInspectorProps {
   model?: string;
   durationSeconds?: number;
   onStatusChange?: (status: string) => void;
+  onClose?: () => void;
   className?: string;
 }
 
@@ -35,6 +37,7 @@ export function RunInspector({
   model,
   durationSeconds,
   onStatusChange,
+  onClose,
   className,
 }: RunInspectorProps) {
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
@@ -91,9 +94,20 @@ export function RunInspector({
   if (!runId) {
     return (
       <div className="flex flex-col h-full bg-[#0D120F] border-l border-[#202A22] p-6 font-mono text-xs">
-        <div className="flex items-center gap-2 pb-4 mb-8 border-b border-[#202A22] text-[#9BA79D]">
-          <Activity className="w-4 h-4 text-[#657066]" />
-          <span className="font-bold tracking-wider text-[#F1F5ED]">RUN INSPECTOR</span>
+        <div className="flex items-center justify-between pb-4 mb-8 border-b border-[#202A22] text-[#9BA79D]">
+          <div className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-[#657066]" />
+            <span className="font-bold tracking-wider text-[#F1F5ED]">RUN INSPECTOR</span>
+          </div>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="p-1 rounded text-[#657066] hover:text-[#F1F5ED] hover:bg-[#121812] transition"
+              title="Close inspector"
+            >
+              <PanelRightClose className="w-4 h-4" />
+            </button>
+          )}
         </div>
         <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
           <Layers className="w-8 h-8 text-[#657066] mb-3 stroke-[1.5]" />
@@ -122,7 +136,7 @@ export function RunInspector({
             </span>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
             <span
               className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold border ${
                 getStageColor(taskStatus).badge
@@ -132,6 +146,15 @@ export function RunInspector({
             </span>
             {isPolling && (
               <RotateCw className="w-3.5 h-3.5 text-[#B8F23D] animate-spin" />
+            )}
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="p-1 rounded text-[#657066] hover:text-[#F1F5ED] hover:bg-[#070A08] transition ml-1"
+                title="Close inspector"
+              >
+                <PanelRightClose className="w-4 h-4" />
+              </button>
             )}
           </div>
         </div>

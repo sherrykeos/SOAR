@@ -4,7 +4,6 @@ import React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  LayoutDashboard,
   ListTodo,
   FolderOpen,
   Database,
@@ -14,6 +13,9 @@ import {
   Plus,
   ShieldCheck,
   RefreshCw,
+  PanelLeftClose,
+  PanelLeft,
+  MessageSquare,
 } from "lucide-react";
 import { Logo } from "@/components/ui/Logo";
 import { useWorkbench } from "@/context/WorkbenchContext";
@@ -34,11 +36,14 @@ export function Sidebar() {
     isBackendOnline,
     health,
     checkHealth,
+    activeRunId,
     setActiveRunId,
+    sidebarCollapsed,
+    setSidebarCollapsed,
   } = useWorkbench();
 
   const navItems = [
-    { name: "Home", href: "/app", icon: LayoutDashboard, exact: true },
+    { name: "Chat", href: "/app", icon: MessageSquare, exact: true },
     {
       name: "Tasks",
       href: "/app/tasks",
@@ -57,32 +62,67 @@ export function Sidebar() {
     { name: "Settings", href: "/app/settings", icon: Settings },
   ];
 
-  const handleNewTask = () => {
+  const handleNewChat = () => {
     setActiveRunId(null);
     router.push("/app");
   };
 
   return (
-    <aside className="w-64 bg-[#070A08] border-r border-[#202A22] flex flex-col justify-between p-3 select-none shrink-0 h-screen sticky top-0 font-sans">
-      <div className="flex flex-col gap-4">
-        {/* Logo */}
-        <div className="px-2 pt-1 pb-2 border-b border-[#202A22]/50">
-          <Logo href="/" />
+    <aside
+      className={`bg-[#070A08] border-r border-[#202A22] flex flex-col justify-between p-3 select-none shrink-0 h-screen sticky top-0 font-sans transition-all duration-200 z-20 ${
+        sidebarCollapsed ? "w-[68px]" : "w-64"
+      }`}
+    >
+      <div className="flex flex-col gap-3 min-h-0 overflow-hidden">
+        {/* Top Header: Logo + Collapse Toggle */}
+        <div className="flex items-center justify-between px-1 pt-1 pb-2 border-b border-[#202A22]/50">
+          {!sidebarCollapsed ? (
+            <>
+              <Logo href="/" />
+              <button
+                onClick={() => setSidebarCollapsed(true)}
+                className="p-1.5 rounded-lg text-[#657066] hover:text-[#F1F5ED] hover:bg-[#121812] transition-colors cursor-pointer"
+                title="Collapse sidebar"
+              >
+                <PanelLeftClose className="w-4 h-4" />
+              </button>
+            </>
+          ) : (
+            <div className="w-full flex flex-col items-center gap-2">
+              <button
+                onClick={() => setSidebarCollapsed(false)}
+                className="p-2 rounded-lg text-[#9BA79D] hover:text-[#D5FF78] hover:bg-[#121812] transition-colors cursor-pointer"
+                title="Expand sidebar"
+              >
+                <PanelLeft className="w-5 h-5 text-[#B8F23D]" />
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* New Task Button */}
-        <button
-          onClick={handleNewTask}
-          className="w-full flex items-center justify-between px-3 py-2 bg-[#121812] border border-[#B8F23D]/30 text-[#F1F5ED] rounded-lg hover:border-[#B8F23D] hover:bg-[#171E18] transition-all group cursor-pointer shadow-sm"
-        >
-          <div className="flex items-center gap-2">
-            <Plus className="w-4 h-4 text-[#B8F23D] group-hover:rotate-90 transition-transform" />
-            <span className="text-xs font-semibold">New Task</span>
-          </div>
-          <kbd className="font-mono text-[10px] bg-[#0D120F] border border-[#202A22] px-1.5 py-0.5 rounded text-[#9BA79D] group-hover:text-white">
-            ⌘N
-          </kbd>
-        </button>
+        {/* New Chat Button */}
+        {!sidebarCollapsed ? (
+          <button
+            onClick={handleNewChat}
+            className="w-full flex items-center justify-between px-3 py-2 bg-[#121812] border border-[#B8F23D]/30 text-[#F1F5ED] rounded-lg hover:border-[#B8F23D] hover:bg-[#171E18] transition-all group cursor-pointer shadow-sm"
+          >
+            <div className="flex items-center gap-2">
+              <Plus className="w-4 h-4 text-[#B8F23D] group-hover:rotate-90 transition-transform" />
+              <span className="text-xs font-semibold">New Chat</span>
+            </div>
+            <kbd className="font-mono text-[10px] bg-[#0D120F] border border-[#202A22] px-1.5 py-0.5 rounded text-[#9BA79D] group-hover:text-white">
+              ⌘N
+            </kbd>
+          </button>
+        ) : (
+          <button
+            onClick={handleNewChat}
+            className="w-full flex items-center justify-center p-2.5 bg-[#121812] border border-[#B8F23D]/30 text-[#B8F23D] rounded-lg hover:border-[#B8F23D] hover:bg-[#171E18] transition-all cursor-pointer shadow-sm"
+            title="New Chat (⌘N)"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        )}
 
         {/* Navigation Items */}
         <nav className="flex flex-col gap-0.5">
@@ -91,6 +131,26 @@ export function Sidebar() {
             const isActive = item.exact
               ? pathname === item.href
               : pathname.startsWith(item.href);
+
+            if (sidebarCollapsed) {
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  title={item.name}
+                  className={`flex items-center justify-center p-2.5 rounded-lg text-xs transition-all relative ${
+                    isActive
+                      ? "bg-[#121812] text-[#B8F23D]"
+                      : "text-[#9BA79D] hover:bg-[#0D120F] hover:text-[#F1F5ED]"
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {item.badge && (
+                    <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-[#B8F23D]" />
+                  )}
+                </Link>
+              );
+            }
 
             return (
               <Link
@@ -105,13 +165,13 @@ export function Sidebar() {
                 {isActive && (
                   <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 bg-[#B8F23D] rounded-r" />
                 )}
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-center gap-2.5 min-w-0">
                   <Icon
-                    className={`w-4 h-4 ${
+                    className={`w-4 h-4 shrink-0 ${
                       isActive ? "text-[#B8F23D]" : "text-[#657066]"
                     }`}
                   />
-                  <span>{item.name}</span>
+                  <span className="truncate">{item.name}</span>
                 </div>
                 {item.badge && (
                   <span
@@ -128,49 +188,109 @@ export function Sidebar() {
             );
           })}
         </nav>
+
+        {/* Recent Chats Section (ChatGPT / Claude style) */}
+        {!sidebarCollapsed && sessionTasks.length > 0 && (
+          <div className="flex-1 flex flex-col min-h-0 pt-3 border-t border-[#202A22]/50 overflow-hidden">
+            <div className="px-2 pb-1.5 text-[10px] uppercase font-bold tracking-wider text-[#657066] font-mono">
+              RECENT CHATS
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-0.5 pr-1 text-xs">
+              {sessionTasks.slice(0, 10).map((t) => {
+                const isCurrent = activeRunId === t.run_id;
+                return (
+                  <button
+                    key={t.run_id}
+                    onClick={() => {
+                      setActiveRunId(t.run_id);
+                      if (pathname !== "/app") router.push("/app");
+                    }}
+                    className={`w-full text-left px-2.5 py-1.5 rounded-lg truncate transition-all flex items-center gap-2 cursor-pointer ${
+                      isCurrent
+                        ? "bg-[#121812] text-[#F1F5ED] border border-[#B8F23D]/30 font-medium"
+                        : "text-[#9BA79D] hover:bg-[#0D120F] hover:text-[#F1F5ED]"
+                    }`}
+                    title={t.task}
+                  >
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                        t.status === "completed"
+                          ? "bg-[#22C55E]"
+                          : t.status === "failed"
+                          ? "bg-[#EF4444]"
+                          : "bg-[#B8F23D] animate-pulse"
+                      }`}
+                    />
+                    <span className="truncate">{t.task}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Bottom Telemetry & Health Panel */}
-      <div className="flex flex-col gap-2 pt-3 border-t border-[#202A22]/60">
-        {/* Local Mode Badge */}
-        <div className="p-2.5 rounded-lg bg-[#0D120F] border border-[#202A22] flex flex-col gap-1 font-mono">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-[11px] text-[#D5FF78] font-semibold">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#B8F23D] animate-pulse" />
-              LOCAL MODE
+      <div className="flex flex-col gap-2 pt-3 border-t border-[#202A22]/60 shrink-0">
+        {!sidebarCollapsed ? (
+          <>
+            {/* Local Mode Badge */}
+            <div className="p-2.5 rounded-lg bg-[#0D120F] border border-[#202A22] flex flex-col gap-1 font-mono">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-[11px] text-[#D5FF78] font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#B8F23D] animate-pulse" />
+                  LOCAL MODE
+                </div>
+                <ShieldCheck className="w-3.5 h-3.5 text-[#B8F23D]" />
+              </div>
+              <div className="text-[10px] text-[#657066] leading-tight">
+                Runs locally · No external network
+              </div>
             </div>
-            <ShieldCheck className="w-3.5 h-3.5 text-[#B8F23D]" />
-          </div>
-          <div className="text-[10px] text-[#657066] leading-tight">
-            Runs locally · No external network
-          </div>
-        </div>
 
-        {/* Real Backend Status */}
-        <div className="px-2.5 py-1.5 rounded-lg bg-[#0A0E0C] border border-[#202A22]/70 flex items-center justify-between text-[11px] font-mono">
-          <div className="flex items-center gap-2">
+            {/* Real Backend Status */}
+            <div className="px-2.5 py-1.5 rounded-lg bg-[#0A0E0C] border border-[#202A22]/70 flex items-center justify-between text-[11px] font-mono">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    isBackendOnline ? "bg-[#22C55E]" : "bg-[#EF4444]"
+                  }`}
+                />
+                <span
+                  className={
+                    isBackendOnline ? "text-[#F1F5ED]" : "text-[#EF4444] font-medium"
+                  }
+                >
+                  {isBackendOnline
+                    ? `Daemon v${health?.version || "0.1"}`
+                    : "Daemon offline"}
+                </span>
+              </div>
+
+              {!isBackendOnline && (
+                <button
+                  onClick={checkHealth}
+                  title="Retry connection"
+                  className="text-[#657066] hover:text-[#B8F23D] p-1 transition"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-col items-center gap-2 py-1">
             <span
-              className={`w-2 h-2 rounded-full ${
+              className={`w-2.5 h-2.5 rounded-full ${
                 isBackendOnline ? "bg-[#22C55E]" : "bg-[#EF4444]"
               }`}
+              title={isBackendOnline ? "Daemon Online" : "Daemon Offline"}
             />
-            <span
-              className={isBackendOnline ? "text-[#F1F5ED]" : "text-[#EF4444] font-medium"}
-            >
-              {isBackendOnline ? `Daemon v${health?.version || "0.1"}` : "Daemon offline"}
-            </span>
+            <div title="LOCAL MODE — Runs locally · No external network">
+              <ShieldCheck className="w-4 h-4 text-[#B8F23D]" />
+            </div>
           </div>
-
-          {!isBackendOnline && (
-            <button
-              onClick={checkHealth}
-              title="Retry connection"
-              className="text-[#657066] hover:text-[#B8F23D] p-1 transition"
-            >
-              <RefreshCw className="w-3 h-3" />
-            </button>
-          )}
-        </div>
+        )}
       </div>
     </aside>
   );
