@@ -17,7 +17,14 @@ import {
   Settings,
 } from "lucide-react";
 
+const emptySubscribe = () => () => {};
+
 export function MobileSidebar() {
+  const isClient = React.useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
   const pathname = usePathname();
   const { mobileSidebarOpen, setMobileSidebarOpen, sessionTasks, models } =
     useWorkbench();
@@ -32,7 +39,7 @@ export function MobileSidebar() {
       name: "Tasks",
       href: "/app/tasks",
       icon: ListTodo,
-      badge: sessionTasks.length > 0 ? `${sessionTasks.length}` : undefined,
+      badge: isClient && sessionTasks.length > 0 ? `${sessionTasks.length}` : undefined,
     },
     { name: "Files", href: "/app/files", icon: FolderOpen },
     { name: "Knowledge", href: "/app/knowledge", icon: Database },
@@ -40,7 +47,7 @@ export function MobileSidebar() {
       name: "Models",
       href: "/app/models",
       icon: Cpu,
-      badge: models.length > 0 ? `${models.length}` : undefined,
+      badge: isClient && models.length > 0 ? `${models.length}` : undefined,
     },
     { name: "Tools", href: "/app/tools", icon: Wrench },
     { name: "Settings", href: "/app/settings", icon: Settings },

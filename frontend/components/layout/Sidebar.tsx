@@ -18,7 +18,14 @@ import {
 import { Logo } from "@/components/ui/Logo";
 import { useWorkbench } from "@/context/WorkbenchContext";
 
+const emptySubscribe = () => () => {};
+
 export function Sidebar() {
+  const isClient = React.useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
   const pathname = usePathname();
   const router = useRouter();
   const {
@@ -36,7 +43,7 @@ export function Sidebar() {
       name: "Tasks",
       href: "/app/tasks",
       icon: ListTodo,
-      badge: sessionTasks.length > 0 ? `${sessionTasks.length}` : undefined,
+      badge: isClient && sessionTasks.length > 0 ? `${sessionTasks.length}` : undefined,
     },
     { name: "Files", href: "/app/files", icon: FolderOpen },
     { name: "Knowledge", href: "/app/knowledge", icon: Database },
@@ -44,7 +51,7 @@ export function Sidebar() {
       name: "Models",
       href: "/app/models",
       icon: Cpu,
-      badge: models.length > 0 ? `${models.length}` : undefined,
+      badge: isClient && models.length > 0 ? `${models.length}` : undefined,
     },
     { name: "Tools", href: "/app/tools", icon: Wrench },
     { name: "Settings", href: "/app/settings", icon: Settings },
