@@ -85,6 +85,68 @@ class DatabaseManager:
             return cursor.rowcount > 0
 
     # -------------------------------------------------------------
+    # Files (Local File Storage Management)
+    # -------------------------------------------------------------
+    def insert_file(
+        self,
+        original_filename: str,
+        stored_filename: str,
+        file_type: str,
+        file_size: int,
+        content_hash: str,
+        storage_path: str,
+        mime_type: Optional[str] = None,
+        file_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Inserts a new managed file record into metadata storage."""
+        file_id = file_id or str(uuid.uuid4())
+        created_at = datetime.now(timezone.utc).isoformat()
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO files (id, original_filename, stored_filename, file_type, file_size, content_hash, mime_type, storage_path, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (file_id, original_filename, stored_filename, file_type, file_size, content_hash, mime_type, storage_path, created_at),
+            )
+            conn.commit()
+
+        return self.get_file(file_id)  # type: ignore
+
+    def get_file(self, file_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves a managed file record by its ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM files WHERE id = ?", (file_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_file_by_hash(self, content_hash: str) -> Optional[Dict[str, Any]]:
+        """Retrieves a managed file record by its SHA-256 hash."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM files WHERE content_hash = ?", (content_hash,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def list_files(self) -> List[Dict[str, Any]]:
+        """Lists all managed file records in the metadata database."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM files ORDER BY created_at DESC")
+            return [dict(row) for row in cursor.fetchall()]
+
+    def delete_file(self, file_id: str) -> bool:
+        """Deletes a managed file record from the metadata database."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    # -------------------------------------------------------------
     # Agent Runs
     # -------------------------------------------------------------
     def create_agent_run(

@@ -47,8 +47,23 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 """
 
+FILES_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS files (
+    id TEXT PRIMARY KEY,
+    original_filename TEXT NOT NULL,
+    stored_filename TEXT NOT NULL,
+    file_type TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,
+    mime_type TEXT,
+    storage_path TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
 INDEXES_SQL = """
 CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash);
+CREATE INDEX IF NOT EXISTS idx_files_content_hash ON files(content_hash);
 CREATE INDEX IF NOT EXISTS idx_agent_steps_run_id ON agent_steps(run_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
 """
@@ -58,8 +73,10 @@ def create_tables(conn: sqlite3.Connection) -> None:
     """Initializes all foundational database tables and indexes."""
     cursor = conn.cursor()
     cursor.execute(DOCUMENTS_TABLE_SQL)
+    cursor.execute(FILES_TABLE_SQL)
     cursor.execute(AGENT_RUNS_TABLE_SQL)
     cursor.execute(AGENT_STEPS_TABLE_SQL)
     cursor.execute(AUDIT_LOGS_TABLE_SQL)
     cursor.executescript(INDEXES_SQL)
     conn.commit()
+
