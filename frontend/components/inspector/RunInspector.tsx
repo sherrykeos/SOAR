@@ -215,7 +215,7 @@ export function RunInspector({
                         </span>
                       </div>
                       <div className="flex items-center gap-2 text-[10px] text-[#657066]">
-                        <span>{formatTimestamp(event.timestamp)}</span>
+                        <span suppressHydrationWarning>{formatTimestamp(event.timestamp)}</span>
                         {isExpanded ? (
                           <ChevronUp className="w-3.5 h-3.5" />
                         ) : (

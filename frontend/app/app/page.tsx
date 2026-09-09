@@ -253,7 +253,9 @@ export default function WorkbenchHomePage() {
                     </div>
 
                     <div className="flex items-center gap-3 font-mono text-[11px] shrink-0">
-                      <span className="text-[#657066]">{formatTimestamp(task.created_at)}</span>
+                      <span className="text-[#657066]" suppressHydrationWarning>
+                        {formatTimestamp(task.created_at)}
+                      </span>
                       <Link
                         href={`/app/tasks/${task.run_id}`}
                         onClick={(e) => e.stopPropagation()}

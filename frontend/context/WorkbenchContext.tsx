@@ -1,6 +1,14 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useSyncExternalStore,
+} from "react";
 import type { ModelItem, HealthResponse, ClientTaskRecord } from "@/types";
 import { getHealth } from "@/lib/api/health";
 import { listModels } from "@/lib/api/models";
@@ -40,6 +48,29 @@ const WorkbenchContext = createContext<WorkbenchContextType | undefined>(undefin
 
 const LOCAL_STORAGE_TASKS_KEY = "soar_session_tasks_v1";
 
+function subscribeTasks(callback: () => void) {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener("storage", callback);
+  window.addEventListener("soar-tasks-change", callback);
+  return () => {
+    window.removeEventListener("storage", callback);
+    window.removeEventListener("soar-tasks-change", callback);
+  };
+}
+
+function getTasksSnapshot(): string {
+  if (typeof window === "undefined") return "[]";
+  try {
+    return localStorage.getItem(LOCAL_STORAGE_TASKS_KEY) || "[]";
+  } catch {
+    return "[]";
+  }
+}
+
+function getServerTasksSnapshot(): string {
+  return "[]";
+}
+
 export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [isBackendOnline, setIsBackendOnline] = useState<boolean>(true);
@@ -49,29 +80,30 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
   const [selectedModel, setSelectedModel] = useState<string>("auto");
   const [isLoadingModels, setIsLoadingModels] = useState<boolean>(true);
 
-  // Lazy initialize from localStorage
-  const [sessionTasks, setSessionTasks] = useState<ClientTaskRecord[]>(() => {
-    if (typeof window === "undefined") return [];
+  const rawTasksJson = useSyncExternalStore(
+    subscribeTasks,
+    getTasksSnapshot,
+    getServerTasksSnapshot
+  );
+
+  const sessionTasks = useMemo<ClientTaskRecord[]>(() => {
     try {
-      const stored = localStorage.getItem(LOCAL_STORAGE_TASKS_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) return parsed;
-      }
+      const parsed = JSON.parse(rawTasksJson);
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
-      // ignore
+      return [];
     }
-    return [];
-  });
+  }, [rawTasksJson]);
 
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState<boolean>(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState<boolean>(false);
 
-  // Save session tasks to localStorage
+  // Save session tasks to localStorage & notify store subscribers
   const persistTasks = useCallback((tasks: ClientTaskRecord[]) => {
     try {
-      localStorage.setItem(LOCAL_STORAGE_TASKS_KEY, JSON.stringify(tasks.slice(-50)));
+      localStorage.setItem(LOCAL_STORAGE_TASKS_KEY, JSON.stringify(tasks.slice(0, 50)));
+      window.dispatchEvent(new Event("soar-tasks-change"));
     } catch {
       // ignore
     }
@@ -98,32 +130,25 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
         setDefaultModel(res.default_model);
       }
     } catch {
-      // If backend is offline, maintain empty or existing
+      // handled gracefully
     } finally {
       setIsLoadingModels(false);
     }
   }, []);
 
-  // Periodic health check & initial model fetch
+  // Initial data loading
   useEffect(() => {
     let isSubscribed = true;
 
     const initialize = async () => {
+      await checkHealth();
       try {
-        const h = await getHealth();
+        const res = await listModels();
         if (isSubscribed) {
-          setHealth(h);
-          setIsBackendOnline(true);
-        }
-      } catch {
-        if (isSubscribed) setIsBackendOnline(false);
-      }
-
-      try {
-        const m = await listModels();
-        if (isSubscribed) {
-          setModels(m.models || []);
-          if (m.default_model) setDefaultModel(m.default_model);
+          setModels(res.models || []);
+          if (res.default_model) {
+            setDefaultModel(res.default_model);
+          }
           setIsLoadingModels(false);
         }
       } catch {
@@ -157,27 +182,21 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
 
   const addSessionTask = useCallback(
     (task: ClientTaskRecord) => {
-      setSessionTasks((prev) => {
-        const updated = [task, ...prev.filter((t) => t.run_id !== task.run_id)];
-        persistTasks(updated);
-        return updated;
-      });
+      const updated = [task, ...sessionTasks.filter((t) => t.run_id !== task.run_id)];
+      persistTasks(updated);
       setActiveRunId(task.run_id);
     },
-    [persistTasks]
+    [sessionTasks, persistTasks]
   );
 
   const updateSessionTask = useCallback(
     (runId: string, updates: Partial<ClientTaskRecord>) => {
-      setSessionTasks((prev) => {
-        const updated = prev.map((t) =>
-          t.run_id === runId ? { ...t, ...updates } : t
-        );
-        persistTasks(updated);
-        return updated;
-      });
+      const updated = sessionTasks.map((t) =>
+        t.run_id === runId ? { ...t, ...updates } : t
+      );
+      persistTasks(updated);
     },
-    [persistTasks]
+    [sessionTasks, persistTasks]
   );
 
   const getTaskByRunId = useCallback(

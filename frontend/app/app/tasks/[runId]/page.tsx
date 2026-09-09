@@ -123,7 +123,7 @@ export default function TaskDetailPage() {
               </span>
             )}
             {localRecord?.created_at && (
-              <span className="flex items-center gap-1.5">
+              <span className="flex items-center gap-1.5" suppressHydrationWarning>
                 <Clock className="w-3.5 h-3.5" />
                 {formatDate(localRecord.created_at)}
               </span>

@@ -271,7 +271,7 @@ export default function FileManagerPage() {
                     <td className="py-3 px-4 text-[#657066] hidden md:table-cell select-all font-mono text-[11px]">
                       {file.sha256 ? `${file.sha256.substring(0, 12)}...` : "--"}
                     </td>
-                    <td className="py-3 px-4 text-[#657066] hidden sm:table-cell">
+                    <td className="px-4 py-3 text-right text-xs text-[#9BA79D]" suppressHydrationWarning>
                       {formatDate(file.created_at)}
                     </td>
                     <td className="py-3 px-4 text-right">
