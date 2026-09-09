@@ -53,6 +53,8 @@ class Executor:
         self,
         action: ToolAction,
         run_id: str | None = None,
+        context: Any = None,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """
         Executes a single ToolAction safely:
@@ -94,23 +96,32 @@ class Executor:
                 "error": err,
             }
 
-        # Validate arguments against the tool's schema
-        validation_error = tool.validate_arguments(action.arguments)
-        if validation_error:
-            err = f"Tool argument validation failed: {validation_error}"
+        # Validate arguments against the tool's schema using ToolValidator
+        validation = getattr(tool, "validate_action", None)
+        if callable(validation):
+            val_result = tool.validate_action(action.arguments)
+        else:
+            from app.tools.validator import ToolValidator
+            val_result = ToolValidator.validate(tool, action.arguments)
+
+        if not val_result.is_valid:
+            from app.tools.validator import ToolValidator
+            formatted_err = ToolValidator.format_error_observation(tool, val_result, task_context=kwargs.get("context"))
             duration = time.perf_counter() - start_time
             if self.emitter:
                 self.emitter.emit(
                     stage=EventStage.TOOL_EXECUTING,
                     status=EventStatus.FAILED,
-                    message=f"Tool execution failed — {action.tool}",
-                    metadata={"tool": action.tool, "error": err, "duration_seconds": round(duration, 3)},
+                    message=f"Tool argument validation failed — {action.tool}",
+                    metadata={"tool": action.tool, "error_code": val_result.error_code, "duration_seconds": round(duration, 3)},
                     run_id=run_id,
                 )
             return {
                 "status": "error",
                 "tool": action.tool,
-                "error": err,
+                "error": formatted_err,
+                "error_code": val_result.error_code,
+                "validation_error": val_result.to_dict(),
             }
 
         try:

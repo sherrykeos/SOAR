@@ -1,10 +1,11 @@
+import json
 from typing import Any
 
 from .action import ToolAction
 from .events import EventStage, EventStatus, ProgressEventEmitter, sanitize_value
 from .executor import Executor
 from .planner import Planner
-from .state import AgentState
+from .state import AgentState, TaskContext
 
 
 class Agent:
@@ -49,6 +50,7 @@ class Agent:
         state = AgentState(
             task=task,
             max_iterations=self.max_iterations,
+            context=TaskContext.from_task(task),
         )
         state.status = "running"
 
@@ -97,12 +99,69 @@ class Agent:
             # 2. ACT & 3. OBSERVE
             for step in state.plan:
                 if isinstance(step, ToolAction):
+                    # Check failure fingerprint to prevent repeating identical failing actions
+                    try:
+                        norm_args = json.dumps(step.arguments, sort_keys=True)
+                    except (TypeError, ValueError):
+                        norm_args = str(step.arguments)
+
+                    prev_failure = next(
+                        (f for f in state.failure_fingerprints if f.get("tool") == step.tool and f.get("args") == norm_args),
+                        None
+                    )
+
+                    if prev_failure:
+                        print(f"[AGENT] Intercepted repeated failing action: {step.tool} with {step.arguments}")
+                        prev_err_msg = prev_failure.get("error", "Action previously failed.")
+                        repeated_obs_msg = (
+                            f"REPEATED FAILING ACTION DETECTED:\n"
+                            f"The action '{step.tool}' with arguments {step.arguments} already failed previously in this run with error:\n"
+                            f"'{prev_err_msg}'\n\n"
+                            f"DO NOT repeat the exact same failing action. Correct the argument names, fix file paths, or choose another valid approach."
+                        )
+                        action_result = {
+                            "status": "error",
+                            "tool": step.tool,
+                            "error": repeated_obs_msg,
+                            "is_repeated_failure": True,
+                        }
+                        state.results.append(action_result)
+                        state.observations.append({
+                            "iteration": state.iterations,
+                            "tool": step.tool,
+                            "arguments": step.arguments,
+                            "status": "error",
+                            "result": repeated_obs_msg,
+                        })
+                        state.current_step += 1
+                        if self.emitter:
+                            self.emitter.emit(
+                                stage=EventStage.TOOL_EXECUTING,
+                                status=EventStatus.FAILED,
+                                message=f"Repeated action prevented — {step.tool}",
+                                metadata={"tool": step.tool, "reason": "repeated_failure"},
+                                run_id=state.run_id,
+                            )
+                        continue
+
                     print(f"Executing tool action: {step.tool} with arguments {step.arguments}")
-                    action_result = self.executor.execute_action(step, run_id=state.run_id)
+                    action_result = self.executor.execute_action(
+                        step,
+                        run_id=state.run_id,
+                        context=state.context,
+                    )
                     state.results.append(action_result)
 
-                    # Capture Observation
+                    # Record failure fingerprint if action failed
                     raw_res = action_result.get("result", action_result.get("error", ""))
+                    if action_result.get("status") == "error":
+                        state.failure_fingerprints.append({
+                            "tool": step.tool,
+                            "args": norm_args,
+                            "error": str(raw_res)[:300],
+                        })
+
+                    # Capture Observation
                     observation = {
                         "iteration": state.iterations,
                         "tool": step.tool,

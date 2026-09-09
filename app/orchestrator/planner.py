@@ -28,25 +28,33 @@ class Planner:
 
         lines = ["Available tools:"]
         for tool in tools:
-            lines.append(f"\nTool: {tool.name}")
-            lines.append(f"Description: {tool.description}")
-            if hasattr(tool, "parameters") and tool.parameters:
-                req_params = [
-                    (k, v) for k, v in tool.parameters.items() if v.get("required", False)
-                ]
-                opt_params = [
-                    (k, v) for k, v in tool.parameters.items() if not v.get("required", False)
-                ]
-                if req_params:
-                    lines.append("Required parameters:")
-                    for p_name, p_meta in req_params:
-                        lines.append(f"  - {p_name}: {p_meta.get('description', '')}")
-                if opt_params:
-                    lines.append("Optional parameters:")
-                    for p_name, p_meta in opt_params:
-                        lines.append(f"  - {p_name}: {p_meta.get('description', '')}")
+            lines.append("")
+            if hasattr(tool, "get_schema_prompt"):
+                lines.append(tool.get_schema_prompt())
             else:
-                lines.append("Parameters: none")
+                lines.append(f"Tool: {tool.name}")
+                lines.append(f"Description: {tool.description}")
+                if hasattr(tool, "parameters") and tool.parameters:
+                    lines.append(f"Parameters: {list(tool.parameters.keys())}")
+        return "\n".join(lines)
+
+    def _format_task_context(self, state: AgentState) -> str:
+        if not state.context:
+            from .state import TaskContext
+            state.context = TaskContext.from_task(state.task)
+
+        ctx = state.context
+        if not ctx.detected_paths:
+            return ""
+
+        lines = ["USER TASK CONTEXT & DETECTED PATHS:"]
+        if ctx.input_paths:
+            lines.append(f"- Input path(s) to read/analyze: {', '.join(ctx.input_paths)}")
+        if ctx.output_paths:
+            lines.append(f"- Output path(s) to create/save: {', '.join(ctx.output_paths)}")
+        if ctx.detected_paths:
+            lines.append(f"- All detected file paths: {', '.join(ctx.detected_paths)}")
+        lines.append("CRITICAL: Use the exact paths listed above with full directory prefixes (do NOT strip 'inputs/' or 'outputs/').")
         return "\n".join(lines)
 
     def _format_observations(self, state: AgentState) -> str:
@@ -60,7 +68,7 @@ class Planner:
             status = obs.get("status", "unknown")
             result = obs.get("result", "")
             lines.append(
-                f"Step {i}: Tool '{tool}' ({status}) | Arguments: {args} | Result: {result}"
+                f"Step {i}: Tool '{tool}' ({status}) | Arguments: {args}\nResult/Observation:\n{result}"
             )
         return "\n".join(lines)
 
@@ -75,15 +83,17 @@ class Planner:
             )
 
         tools_desc = self._format_tools_description()
+        context_desc = self._format_task_context(state)
         obs_desc = self._format_observations(state)
 
+        context_block = f"\n{context_desc}\n" if context_desc else ""
         history_block = f"\n{obs_desc}\n" if obs_desc else ""
 
         prompt = f"""You are the planning component of SOAR, a sovereign on-premise AI agent.
 
 TASK:
 {state.task}
-
+{context_block}
 {tools_desc}
 {history_block}
 Rules:
@@ -92,10 +102,12 @@ Rules:
 - Do NOT include any explanations, preambles, or commentary.
 - If the task is completed based on observations or no further actions are needed, return "status": "complete" and "steps": [].
 - If more actions are needed, return "status": "continue" and provide the next step(s).
-- Use only tools listed under Available tools.
-- In "arguments", use the EXACT parameter names defined in the tool's parameter list (e.g. "file_path", "output_path", "title", "content", "code"). Do NOT use "parameter_name" as a key.
+- Use ONLY tools listed under Available tools.
+- In "arguments", use the EXACT parameter names defined in the tool's schema (e.g. "file_path", "output_path", "title", "content", "code", "query").
+- NEVER use placeholder keys like "parameter_name".
+- NEVER use placeholder values like "file_path" or "<actual_path>". Supply actual argument values.
 - CRITICAL PATH RULES: Always copy file paths from the TASK exactly as written with their full directory prefixes (e.g. if TASK specifies "inputs/inspection_report.pdf", use "inputs/inspection_report.pdf", NOT "inspection_report.pdf"; if TASK specifies "outputs/approval_note.docx", use "outputs/approval_note.docx").
-- ERROR RECOVERY: If a previous tool step failed or returned an error, analyze the error message and do NOT repeat the exact same failing arguments. Fix the argument values or take a different action.
+- ERROR RECOVERY: If a previous tool step failed or returned a validation error, analyze the error message and schema, and output a corrected action. Do NOT repeat the exact same failing arguments.
 - Keep the plan between 0 and 5 steps.
 - Do not execute the task yourself.
 
