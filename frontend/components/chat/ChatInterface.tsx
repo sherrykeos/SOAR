@@ -38,7 +38,7 @@ import { uploadFile } from "@/lib/api/files";
 import { formatDuration, formatTimestamp } from "@/lib/utils/formatters";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { GeneratedFileCard } from "./GeneratedFileCard";
-import type { ChatMessage, EventItem } from "@/types";
+import type { ChatMessage, ClientTaskRecord, EventItem } from "@/types";
 import { motion, AnimatePresence } from "framer-motion";
 
 export function ChatInterface() {
@@ -61,6 +61,8 @@ export function ChatInterface() {
     inspectorOpen,
     setInspectorOpen,
     setActiveRunId,
+    addSessionTask,
+    updateSessionTask,
   } = useWorkbench();
 
   const { success, error } = useToast();
@@ -228,7 +230,15 @@ export function ChatInterface() {
     const query = prompt.trim();
     if (!query || isExecuting) return;
 
-    const requestedModel = selectedModel === "auto" ? null : selectedModel;
+    // Never submit a stale model id left over from a previous backend config.
+    const selectedModelConfig = models.find((item) => item.id === selectedModel);
+    const requestedModel =
+      selectedModel === "auto" ||
+      !selectedModelConfig ||
+      !selectedModelConfig.enabled ||
+      selectedModelConfig.available === false
+        ? null
+        : selectedModel;
     const attachedFileNames = attachedFiles.map((f) => f.name);
 
     // 1. Prepare User Message
@@ -250,7 +260,7 @@ export function ChatInterface() {
       content: "",
       created_at: new Date().toISOString(),
       status: "running",
-      model: selectedModel === "auto" ? "auto" : selectedModel,
+      model: requestedModel || "auto",
       events: [],
     };
 
@@ -279,6 +289,19 @@ export function ChatInterface() {
     setIsExecuting(true);
     setExecutingMsgId(asstMsgId);
     setInspectorOpen(true);
+    const clientRunId = typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setActiveRunId(clientRunId);
+    addSessionTask({
+      run_id: clientRunId,
+      task: query,
+      model: requestedModel || defaultModel,
+      status: "running",
+      created_at: new Date().toISOString(),
+      events: [],
+      attached_files: attachedFileNames,
+    } satisfies ClientTaskRecord);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
@@ -304,6 +327,7 @@ export function ChatInterface() {
       const res = await createTask({
         task: finalPrompt,
         model: requestedModel,
+        run_id: clientRunId,
         // Pass file_ids of successfully uploaded files so backend resolves real paths
         attached_file_ids: attachedFiles
           .filter((f) => !!f.id)
@@ -322,7 +346,21 @@ export function ChatInterface() {
         })
       );
 
-      setActiveRunId(res.run_id);
+      setActiveRunId(res.run_id || clientRunId);
+      updateSessionTask(clientRunId, {
+        run_id: res.run_id || clientRunId,
+        model: res.model || requestedModel || defaultModel,
+        status: res.status === "failed" ? "failed" : "completed",
+        answer: res.answer,
+        events: initialEvents,
+        duration_seconds:
+          typeof res.model_details === "object" && res.model_details !== null &&
+          "duration_seconds" in res.model_details &&
+          typeof res.model_details.duration_seconds === "number"
+            ? res.model_details.duration_seconds
+            : undefined,
+        execution_mode: res.execution_mode,
+      });
 
       updateMessageInSession(sessionId, asstMsgId, {
         run_id: res.run_id,
@@ -349,6 +387,10 @@ export function ChatInterface() {
       });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Backend unavailable";
+      updateSessionTask(clientRunId, {
+        status: "failed",
+        answer: `Error executing request: ${errorMsg}`,
+      });
       updateMessageInSession(sessionId, asstMsgId, {
         content: `Error executing request: ${errorMsg}`,
         status: "failed",

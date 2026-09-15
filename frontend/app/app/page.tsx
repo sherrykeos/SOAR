@@ -59,7 +59,7 @@ export default function WorkbenchHomePage() {
           <div className="fixed inset-y-14 right-0 z-30 w-full sm:w-96 xl:relative xl:inset-y-0 xl:w-96 shrink-0 xl:border-l border-[#202A22] bg-[#0D120F] h-[calc(100vh-3.5rem)] xl:h-full overflow-hidden transition-all duration-200 shadow-2xl flex flex-col">
             <RunInspector
               runId={activeTask?.run_id || activeRunId || null}
-              taskStatus={activeTask?.status || "idle"}
+              taskStatus={activeTask?.status || (activeRunId ? "running" : "idle")}
               initialEvents={activeTask?.events || []}
               model={activeTask?.model}
               durationSeconds={activeTask?.duration_seconds}

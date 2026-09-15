@@ -114,7 +114,22 @@ class ModelManager:
                         priority=priority,
                         fixed_response=options.get("fixed_response") if isinstance(options, dict) else None,
                     )
+                    )
+
+        # Keep the installed hard-reasoning model available when an older
+        # cached configuration still contains the previous qwen2:4b label.
+        # The canonical model name is qwen3:4b.
+        registered_ids = {m.model_id for m in self.registry.list_models()}
+        if "qwen3:4b" not in registered_ids:
+            self.registry.register(
+                OllamaModel(
+                    model_name="qwen3:4b",
+                    base_url=ollama_base_url,
+                    capabilities={ModelCapability.REASONING},
+                    priority=20,
+                    timeout=15.0,
                 )
+            )
 
         # Ensure backup mock coder is registered for isolated test execution if not already present
         if "mock-coder" not in [m.model_id for m in self.registry.list_models()]:

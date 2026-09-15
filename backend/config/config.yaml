@@ -34,7 +34,7 @@ models:
     timeout: 180
 
   # 2. Hard Reasoning & Complex Multi-Step Analysis Model
-  - id: "qwen2:4b"
+  - id: "qwen3:4b"
     provider: "ollama"
     capabilities:
       - "reasoning"

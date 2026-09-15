@@ -51,9 +51,7 @@ export function useTaskEvents({
         const hasFinished = data.events.some(
           (e) =>
             (e.stage === "COMPLETED" ||
-              e.stage === "FAILED" ||
-              e.status === "completed" ||
-              e.status === "failed") &&
+              e.stage === "FAILED") &&
             e.status !== "started" &&
             e.status !== "in_progress"
         );
@@ -71,8 +69,9 @@ export function useTaskEvents({
       if (!unmountedRef.current) {
         setError(err instanceof Error ? err.message : "Error fetching events");
       }
-      // Stop polling on error (e.g. 404 Not Found or network error) to avoid spamming the backend
-      return false;
+      // A run can be created just before its first event is visible. Keep the
+      // existing loop alive; terminal events are the only stop condition.
+      return true;
     }
   }, []);
 

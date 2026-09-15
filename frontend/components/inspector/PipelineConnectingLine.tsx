@@ -28,7 +28,7 @@ export function PipelineConnectingLine({
           animate={{ scaleY: 1 }}
           transition={{ duration: 0.3, ease: "easeOut" }}
           style={{ originY: 0 }}
-          className="absolute inset-y-0 w-[2px] bg-[#22C55E] rounded-full shadow-[0_0_6px_rgba(34,197,94,0.4)]"
+          className="absolute inset-y-0 w-[2px] bg-[#B8F23D] rounded-full shadow-[0_0_6px_rgba(184,242,61,0.4)]"
         />
       )}
 
@@ -48,7 +48,7 @@ export function PipelineConnectingLine({
             ease: "easeInOut",
           }}
           style={{ originY: 0 }}
-          className="absolute inset-y-0 w-[2px] bg-gradient-to-b from-[#22C55E] to-[#4ADE80] rounded-full shadow-[0_0_8px_rgba(74,222,128,0.35)]"
+          className="absolute inset-y-0 w-[2px] bg-gradient-to-b from-[#B8F23D] to-[#D5FF78] rounded-full shadow-[0_0_8px_rgba(184,242,61,0.35)]"
         />
       )}
     </div>

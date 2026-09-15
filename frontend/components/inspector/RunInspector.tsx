@@ -43,7 +43,6 @@ interface PipelineStageDef {
   name: string;
   description: string;
   icon: React.ComponentType<{ className?: string }>;
-  matchingKeywords: string[];
 }
 
 const PIPELINE_STAGES: PipelineStageDef[] = [
@@ -51,41 +50,57 @@ const PIPELINE_STAGES: PipelineStageDef[] = [
     id: "stage_classify",
     key: "CLASSIFYING",
     name: "Task Classification",
-    description: "Analyzing prompt intent and setting dispatch mode",
+    description: "Classifying task",
     icon: Layers,
-    matchingKeywords: ["CLASSIFY", "INTENT", "START", "STARTING"],
   },
   {
     id: "stage_route",
     key: "MODEL_SELECTING",
-    name: "Model Routing & Selection",
-    description: "Evaluating local model capability and latency",
+    name: "Model Selection",
+    description: "Selecting execution model",
     icon: Cpu,
-    matchingKeywords: ["MODEL", "ROUTE", "SELECT", "OLLAMA"],
   },
   {
     id: "stage_plan",
     key: "PLANNING",
-    name: "Planning & Context Retrieval",
-    description: "Searching local ChromaDB and generating execution steps",
+    name: "Planning",
+    description: "Generating execution plan",
     icon: Database,
-    matchingKeywords: ["PLAN", "RETRIEVAL", "SEARCH", "KNOWLEDGE", "RAG"],
   },
   {
     id: "stage_execute",
     key: "TOOL_EXECUTING",
-    name: "Tool & Sandbox Execution",
-    description: "Executing local tools and sandbox computations",
+    name: "Tool Execution",
+    description: "Executing local tools",
     icon: Terminal,
-    matchingKeywords: ["TOOL", "EXECUTE", "OBSERVE", "SANDBOX", "PYTHON", "PDF", "DOCX"],
+  },
+  {
+    id: "stage_observe",
+    key: "OBSERVING",
+    name: "Observation",
+    description: "Receiving tool result",
+    icon: Activity,
+  },
+  {
+    id: "stage_reason",
+    key: "REASONING",
+    name: "Reasoning",
+    description: "Processing results",
+    icon: Sparkles,
   },
   {
     id: "stage_complete",
     key: "GENERATING_OUTPUT",
-    name: "Synthesis & Verification",
-    description: "Synthesizing response, formatting outputs, and citations",
+    name: "Output Generation",
+    description: "Generating response or artifact",
     icon: FileCheck,
-    matchingKeywords: ["OUTPUT", "SYNTHESIS", "COMPLETE", "GENERATE", "ANSWER"],
+  },
+  {
+    id: "stage_completed",
+    key: "COMPLETED",
+    name: "Completed",
+    description: "Execution completed",
+    icon: Check,
   },
 ];
 
@@ -103,6 +118,7 @@ export function RunInspector({
   const [expandedStageId, setExpandedStageId] = useState<string | null>(null);
   const [copiedRunId, setCopiedRunId] = useState<boolean>(false);
   const [elapsedMs, setElapsedMs] = useState<number>(0);
+  const [demoStageIndex, setDemoStageIndex] = useState<number>(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const isRunning =
@@ -134,6 +150,25 @@ export function RunInspector({
     return () => clearInterval(interval);
   }, [isRunning]);
 
+  // Temporary presentation mode: visibly walk the checkpoints while the
+  // synchronous task request is still running. Terminal backend events still
+  // decide the final completed/failed state.
+  useEffect(() => {
+    if (!isRunning) {
+      setDemoStageIndex(isCompleted ? PIPELINE_STAGES.length : 0);
+      return;
+    }
+
+    setDemoStageIndex(0);
+    const timer = setInterval(() => {
+      setDemoStageIndex((current) =>
+        Math.min(current + 1, PIPELINE_STAGES.length - 1)
+      );
+    }, 700);
+
+    return () => clearInterval(timer);
+  }, [isRunning, isCompleted, runId]);
+
   const copyRunId = () => {
     if (runId) {
       navigator.clipboard.writeText(runId);
@@ -142,59 +177,36 @@ export function RunInspector({
     }
   };
 
-  // Determine active stage strictly sequentially
   const stageData = useMemo(() => {
     const rawEvents = events.length > 0 ? events : initialEvents;
 
-    // Determine current sequential stage index (0 to 4)
-    let currentStageIdx = 0;
-
-    if (isCompleted) {
-      currentStageIdx = PIPELINE_STAGES.length - 1;
-    } else if (isFailed) {
-      currentStageIdx = Math.min(rawEvents.length > 0 ? rawEvents.length - 1 : 0, PIPELINE_STAGES.length - 1);
-    } else if (isRunning) {
-      if (rawEvents.length > 0) {
-        currentStageIdx = Math.min(rawEvents.length - 1, PIPELINE_STAGES.length - 1);
-      } else {
-        currentStageIdx = 0;
-      }
-    }
-
     return PIPELINE_STAGES.map((def, idx) => {
-      // Find any matching event items for this stage
-      const matchingEvents = rawEvents.filter((e) => {
-        const stageUpper = (e.stage || "").toUpperCase();
-        return def.matchingKeywords.some((kw) => stageUpper.includes(kw));
-      });
+      const matchingEvents = rawEvents.filter((e) => e.stage === def.key);
+      const latestEvent = matchingEvents[matchingEvents.length - 1];
+      const latestStatus = latestEvent?.status?.toUpperCase();
+      const hasFailed = latestStatus === "FAILED";
+      const hasCompleted = latestStatus === "COMPLETED";
+      const isActive = !!latestEvent && !hasFailed && !hasCompleted &&
+        (latestEvent.status === "STARTED" || latestEvent.status === "IN_PROGRESS" || latestEvent.status === "started" || latestEvent.status === "in_progress");
 
       let status: "completed" | "running" | "pending" | "failed" = "pending";
+      if (hasFailed) status = "failed";
+      else if (hasCompleted) status = "completed";
+      else if (isActive) status = "running";
 
-      if (isCompleted) {
+      // Presentation mode owns the intermediate checkpoints. The final
+      // checkpoint is different: it may settle only when the task response
+      // has actually completed.
+      if (isCompleted && !isFailed) {
         status = "completed";
-      } else if (isFailed && idx === currentStageIdx) {
-        status = "failed";
-      } else if (isRunning) {
-        if (idx < currentStageIdx) {
-          status = "completed";
-        } else if (idx === currentStageIdx) {
-          status = "running";
-        } else {
-          status = "pending";
-        }
-      } else {
-        // Idle / cached finished run
-        status = isCompleted ? "completed" : "pending";
+      } else if (isRunning && !isFailed) {
+        if (idx < demoStageIndex) status = "completed";
+        else if (idx === demoStageIndex) status = "running";
+        else status = "pending";
       }
-
-      const latestEvent = matchingEvents[matchingEvents.length - 1];
       const statusMessage =
         latestEvent?.message ||
-        (status === "completed"
-          ? `${def.name} completed successfully`
-          : status === "running"
-          ? `${def.description}...`
-          : def.description);
+        (status === "completed" ? `${def.name} completed` : def.description);
 
       return {
         ...def,
@@ -207,29 +219,13 @@ export function RunInspector({
     });
   }, [events, initialEvents, isCompleted, isFailed, isRunning]);
 
-  // Overall progress percentage strictly calculated from sequential stages
-  const progressPercent = useMemo(() => {
-    if (isCompleted) return 100;
-    if (isFailed) return 100;
-    if (!isRunning) return 0;
-    const completedCount = stageData.filter((s) => s.status === "completed").length;
-    const runningCount = stageData.filter((s) => s.status === "running").length;
-    return Math.min(96, Math.round(((completedCount + runningCount * 0.4) / PIPELINE_STAGES.length) * 100));
-  }, [stageData, isCompleted, isFailed, isRunning]);
-
-  const activeStageDisplay = useMemo(() => {
-    const completedCount = stageData.filter((s) => s.status === "completed").length;
-    const runningCount = stageData.filter((s) => s.status === "running").length;
-    return Math.min(PIPELINE_STAGES.length, completedCount + (runningCount > 0 ? 1 : 0));
-  }, [stageData]);
-
   // Empty State when no run is selected
   if (!runId) {
     return (
       <div className={`flex flex-col h-full bg-[#0D120F] border-l border-[#202A22] p-4 sm:p-5 font-mono text-xs ${className || ""}`}>
         <div className="flex items-center justify-between pb-3.5 mb-6 border-b border-[#202A22] text-[#9BA79D]">
           <div className="flex items-center gap-2">
-            <GitBranch className="w-4 h-4 text-[#22C55E]" />
+            <GitBranch className="w-4 h-4 text-[#B8F23D]" />
             <span className="font-bold tracking-wider text-[#F1F5ED]">EXECUTION PIPELINE</span>
           </div>
           {onClose && (
@@ -253,8 +249,8 @@ export function RunInspector({
         </div>
         <div className="pt-3 border-t border-[#202A22] text-[10px] text-[#657066] flex justify-between items-center">
           <span>Sovereign Telemetry</span>
-          <span className="text-[#22C55E] flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E]" />
+          <span className="text-[#B8F23D] flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#B8F23D]" />
             Ready
           </span>
         </div>
@@ -268,7 +264,7 @@ export function RunInspector({
       <div className="p-3.5 sm:p-4 bg-[#121812] border-b border-[#202A22] shrink-0 space-y-2.5">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <GitBranch className={`w-4 h-4 shrink-0 ${isRunning ? "text-[#22C55E] animate-pulse" : "text-[#22C55E]"}`} />
+            <GitBranch className={`w-4 h-4 shrink-0 ${isRunning ? "text-[#B8F23D] animate-pulse" : "text-[#B8F23D]"}`} />
             <span className="font-bold tracking-wider text-[#F1F5ED] text-xs truncate">
               EXECUTION PIPELINE
             </span>
@@ -276,12 +272,12 @@ export function RunInspector({
 
           <div className="flex items-center gap-1.5 shrink-0">
             {isRunning ? (
-              <span className="px-2 py-0.5 rounded-full bg-[#22C55E]/15 text-[#4ADE80] border border-[#22C55E]/30 text-[10px] uppercase font-bold flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse" />
+              <span className="px-2 py-0.5 rounded-full bg-[#B8F23D]/15 text-[#D5FF78] border border-[#B8F23D]/30 text-[10px] uppercase font-bold flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#B8F23D] animate-pulse" />
                 RUNNING
               </span>
             ) : isCompleted ? (
-              <span className="px-2 py-0.5 rounded bg-[#22C55E]/10 text-[#4ADE80] border border-[#22C55E]/30 text-[10px] uppercase font-bold flex items-center gap-1">
+              <span className="px-2 py-0.5 rounded bg-[#B8F23D]/10 text-[#D5FF78] border border-[#B8F23D]/30 text-[10px] uppercase font-bold flex items-center gap-1">
                 <Check className="w-3 h-3" />
                 COMPLETE
               </span>
@@ -297,7 +293,7 @@ export function RunInspector({
             )}
 
             {isPolling && (
-              <RotateCw className="w-3 h-3 text-[#22C55E] animate-spin" />
+              <RotateCw className="w-3 h-3 text-[#B8F23D] animate-spin" />
             )}
 
             {onClose && (
@@ -333,13 +329,13 @@ export function RunInspector({
           {model && (
             <div className="flex items-center justify-between">
               <span className="text-[#657066]">Model:</span>
-              <span className="text-[#4ADE80] truncate max-w-[170px]">{model}</span>
+              <span className="text-[#D5FF78] truncate max-w-[170px]">{model}</span>
             </div>
           )}
 
           <div className="flex items-center justify-between">
             <span className="text-[#657066]">Elapsed:</span>
-            <span className={`font-mono ${isRunning ? "text-[#4ADE80] font-semibold" : "text-[#F1F5ED]"}`}>
+            <span className={`font-mono ${isRunning ? "text-[#D5FF78] font-semibold" : "text-[#F1F5ED]"}`}>
               {isRunning
                 ? `${(elapsedMs / 1000).toFixed(1)}s`
                 : durationSeconds !== undefined && durationSeconds > 0
@@ -349,27 +345,6 @@ export function RunInspector({
           </div>
         </div>
 
-        {/* Sequential Progress Bar */}
-        <div className="space-y-1">
-          <div className="flex items-center justify-between text-[10px] text-[#657066]">
-            <span>Checkpoints</span>
-            <span className="text-[#F1F5ED] font-semibold">
-              Stage {activeStageDisplay} of {PIPELINE_STAGES.length} · {progressPercent}%
-            </span>
-          </div>
-          <div className="w-full h-1.5 rounded-full bg-[#070A08] border border-[#202A22] overflow-hidden">
-            <motion.div
-              initial={{ width: 0 }}
-              animate={{ width: `${progressPercent}%` }}
-              transition={{ duration: 0.3, ease: "easeOut" }}
-              className={`h-full rounded-full transition-all duration-300 ${
-                isFailed
-                  ? "bg-[#EF4444]"
-                  : "bg-gradient-to-r from-[#16A34A] to-[#22C55E]"
-              }`}
-            />
-          </div>
-        </div>
       </div>
 
       {/* Sequential Connected Checkpoints List */}
@@ -394,9 +369,9 @@ export function RunInspector({
                   <div
                     className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] shrink-0 z-10 transition-all duration-200 ${
                       isStageCompleted
-                        ? "bg-[#22C55E]/15 text-[#22C55E] border border-[#22C55E]"
+                        ? "bg-[#B8F23D]/15 text-[#B8F23D] border border-[#B8F23D]"
                         : isStageRunning
-                        ? "bg-[#121812] text-[#4ADE80] border border-[#4ADE80] radar-node-pulse"
+                        ? "bg-[#121812] text-[#D5FF78] border border-[#B8F23D] radar-node-pulse"
                         : isStageFailed
                         ? "bg-[#EF4444]/15 text-[#EF4444] border border-[#EF4444]"
                         : "bg-[#121812] text-[#657066] border border-[#202A22]"
@@ -405,7 +380,7 @@ export function RunInspector({
                     {isStageCompleted ? (
                       <Check className="w-3 h-3 stroke-[2.5]" />
                     ) : isStageRunning ? (
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#4ADE80]" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#B8F23D]" />
                     ) : isStageFailed ? (
                       <AlertCircle className="w-3 h-3" />
                     ) : (
@@ -439,7 +414,7 @@ export function RunInspector({
                     }
                     className={`p-2.5 sm:p-3 rounded-lg border transition-all duration-150 cursor-pointer select-none group ${
                       isStageRunning
-                        ? "bg-[#121812] border-[#22C55E]/40"
+                        ? "bg-[#121812] border-[#B8F23D]/40"
                         : isStageCompleted
                         ? "bg-[#0A0E0C] border-[#202A22] hover:border-[#2B382D]"
                         : isStageFailed
@@ -453,9 +428,9 @@ export function RunInspector({
                         <StageIcon
                           className={`w-3.5 h-3.5 shrink-0 ${
                             isStageRunning
-                              ? "text-[#4ADE80]"
+                              ? "text-[#D5FF78]"
                               : isStageCompleted
-                              ? "text-[#22C55E]"
+                              ? "text-[#B8F23D]"
                               : "text-[#657066]"
                           }`}
                         />
@@ -517,7 +492,7 @@ export function RunInspector({
                                   className="p-2 rounded bg-[#070A08] border border-[#202A22] space-y-1"
                                 >
                                   <div className="flex items-center justify-between text-[#657066]">
-                                    <span className="uppercase text-[#4ADE80] font-semibold">
+                                    <span className="uppercase text-[#D5FF78] font-semibold">
                                       {evt.stage}
                                     </span>
                                     <span suppressHydrationWarning>
@@ -555,12 +530,12 @@ export function RunInspector({
       {/* Footer */}
       <div className="p-3 bg-[#070A08] border-t border-[#202A22] text-[10px] text-[#657066] flex items-center justify-between shrink-0">
         <span className="flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E]" />
+          <span className="w-1.5 h-1.5 rounded-full bg-[#B8F23D]" />
           <span>Sovereign pipeline</span>
         </span>
         <button
           onClick={refreshNow}
-          className="text-[#9BA79D] hover:text-[#4ADE80] transition-colors flex items-center gap-1 cursor-pointer"
+          className="text-[#9BA79D] hover:text-[#D5FF78] transition-colors flex items-center gap-1 cursor-pointer"
         >
           <RotateCw className="w-3 h-3" />
           <span>Refresh</span>

@@ -320,13 +320,21 @@ export function WorkbenchProvider({ children }: { children: React.ReactNode }) {
       if (res.default_model) {
         setDefaultModel(res.default_model);
       }
+      if (
+        selectedModel !== "auto" &&
+        !(res.models || []).some(
+          (model) => model.id === selectedModel && model.enabled && model.available !== false
+        )
+      ) {
+        setSelectedModel("auto");
+      }
     } catch {
       // handled gracefully
     } finally {
       setIsLoadingModels(false);
       isLoadingModelsRef.current = false;
     }
-  }, []);
+  }, [selectedModel]);
 
   // Initial data loading
   useEffect(() => {
